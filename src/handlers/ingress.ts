@@ -1,0 +1,297 @@
+/**
+ * Ingress Lambda Handler
+ * 
+ * Handles Slack webhook requests:
+ * - URL verification challenge
+ * - Event callback processing
+ * - Signature verification
+ * - Fast acknowledgement (< 3 seconds)
+ * - SQS enqueueing for async processing
+ * 
+ * Validates: Requirements 1-5, 26, 48
+ */
+
+import type {
+  APIGatewayProxyEventV2,
+  APIGatewayProxyResultV2,
+} from 'aws-lambda';
+import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
+import { SSMClient, GetParameterCommand } from '@aws-sdk/client-ssm';
+import { createHmac, timingSafeEqual } from 'crypto';
+import type {
+  SlackRequest,
+  SlackEventCallbackRequest,
+  SQSEventMessage,
+} from '../types';
+
+// Environment variables
+const QUEUE_URL = process.env.QUEUE_URL!;
+const SIGNING_SECRET_PARAM = process.env.SIGNING_SECRET_PARAM!;
+
+// AWS SDK clients
+const sqsClient = new SQSClient({});
+const ssmClient = new SSMClient({});
+
+// Cache signing secret for Lambda warm starts
+let cachedSigningSecret: string | null = null;
+
+/**
+ * Get Slack signing secret from SSM Parameter Store
+ * Caches the value for Lambda warm starts
+ */
+async function getSigningSecret(): Promise<string> {
+  if (cachedSigningSecret) {
+    return cachedSigningSecret;
+  }
+
+  const response = await ssmClient.send(
+    new GetParameterCommand({
+      Name: SIGNING_SECRET_PARAM,
+      WithDecryption: true,
+    })
+  );
+
+  if (!response.Parameter?.Value) {
+    throw new Error('Signing secret not found in SSM');
+  }
+
+  cachedSigningSecret = response.Parameter.Value;
+  return cachedSigningSecret;
+}
+
+/**
+ * Verify Slack request signature
+ * 
+ * Validates: Requirement 1.1, 1.3
+ */
+export function verifySlackSignature(
+  signingSecret: string,
+  timestamp: string,
+  body: string,
+  signature: string
+): boolean {
+  const baseString = `v0:${timestamp}:${body}`;
+  const hmac = createHmac('sha256', signingSecret);
+  hmac.update(baseString);
+  const computedSignature = `v0=${hmac.digest('hex')}`;
+
+  try {
+    return timingSafeEqual(
+      Buffer.from(computedSignature),
+      Buffer.from(signature)
+    );
+  } catch {
+    // Lengths don't match
+    return false;
+  }
+}
+
+/**
+ * Validate request timestamp is within acceptable window
+ * 
+ * Validates: Requirements 1.2, 1.4, 26.1, 26.2
+ */
+export function isValidTimestamp(
+  timestamp: number,
+  toleranceSec: number = 300
+): boolean {
+  const now = Math.floor(Date.now() / 1000);
+  const diff = now - timestamp;
+
+  // Reject if too old (> 5 minutes)
+  if (diff > toleranceSec) {
+    return false;
+  }
+
+  // Reject if in the future (with 60 second clock skew tolerance)
+  if (diff < -60) {
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Check if event should be processed
+ * 
+ * Validates: Requirements 4.1-4.3, 5.1-5.3
+ */
+export function shouldProcessEvent(event: SlackEventCallbackRequest): boolean {
+  const innerEvent = event.event;
+
+  // Only process DM events (channel_type === 'im')
+  if (innerEvent.channel_type !== 'im') {
+    return false;
+  }
+
+  // Ignore bot messages
+  if (innerEvent.bot_id) {
+    return false;
+  }
+
+  // Ignore edits, deletes, and other subtypes
+  if (innerEvent.subtype) {
+    return false;
+  }
+
+  // Must have text content
+  if (!innerEvent.text) {
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Format SQS message from Slack event
+ */
+function formatSQSMessage(event: SlackEventCallbackRequest): SQSEventMessage {
+  return {
+    event_id: event.event_id,
+    event_time: event.event_time,
+    channel_id: event.event.channel,
+    user_id: event.event.user!,
+    message_ts: event.event.ts,
+    message_text: event.event.text!,
+    thread_ts: event.event.thread_ts,
+    received_at: new Date().toISOString(),
+  };
+}
+
+/**
+ * Lambda handler for Slack webhook requests
+ */
+export async function handler(
+  event: APIGatewayProxyEventV2
+): Promise<APIGatewayProxyResultV2> {
+  const startTime = Date.now();
+
+  // Parse request body
+  let body: string;
+  if (event.isBase64Encoded) {
+    body = Buffer.from(event.body || '', 'base64').toString('utf-8');
+  } else {
+    body = event.body || '';
+  }
+
+  let request: SlackRequest;
+  try {
+    request = JSON.parse(body) as SlackRequest;
+  } catch {
+    console.error('Failed to parse request body');
+    return {
+      statusCode: 400,
+      body: 'Invalid JSON',
+    };
+  }
+
+  // Handle URL verification challenge (no signature check needed for this)
+  if (request.type === 'url_verification') {
+    console.log('URL verification challenge received');
+    return {
+      statusCode: 200,
+      headers: { 'Content-Type': 'text/plain' },
+      body: request.challenge,
+    };
+  }
+
+  // For event callbacks, verify signature
+  const timestamp = event.headers['x-slack-request-timestamp'];
+  const signature = event.headers['x-slack-signature'];
+
+  if (!timestamp || !signature) {
+    console.error('Missing Slack headers');
+    return {
+      statusCode: 401,
+      body: 'Unauthorized',
+    };
+  }
+
+  // Validate timestamp (replay protection)
+  const timestampNum = parseInt(timestamp, 10);
+  if (isNaN(timestampNum) || !isValidTimestamp(timestampNum)) {
+    console.error('Invalid or expired timestamp', { timestamp });
+    return {
+      statusCode: 401,
+      body: 'Unauthorized',
+    };
+  }
+
+  // Verify signature
+  try {
+    const signingSecret = await getSigningSecret();
+    if (!verifySlackSignature(signingSecret, timestamp, body, signature)) {
+      console.error('Invalid signature');
+      return {
+        statusCode: 401,
+        body: 'Unauthorized',
+      };
+    }
+  } catch (error) {
+    console.error('Failed to verify signature', error);
+    return {
+      statusCode: 500,
+      body: 'Internal Server Error',
+    };
+  }
+
+  // Handle event callback
+  if (request.type === 'event_callback') {
+    const eventCallback = request as SlackEventCallbackRequest;
+    const eventId = eventCallback.event_id;
+
+    console.log('Event callback received', { event_id: eventId });
+
+    // Check if event should be processed
+    if (!shouldProcessEvent(eventCallback)) {
+      console.log('Event filtered out', {
+        event_id: eventId,
+        channel_type: eventCallback.event.channel_type,
+        has_bot_id: !!eventCallback.event.bot_id,
+        subtype: eventCallback.event.subtype,
+      });
+      // Return 200 to acknowledge but don't process
+      return {
+        statusCode: 200,
+        body: 'OK',
+      };
+    }
+
+    // Enqueue for async processing
+    try {
+      const sqsMessage = formatSQSMessage(eventCallback);
+      await sqsClient.send(
+        new SendMessageCommand({
+          QueueUrl: QUEUE_URL,
+          MessageBody: JSON.stringify(sqsMessage),
+          MessageDeduplicationId: eventId, // For FIFO queues (if used)
+          MessageGroupId: eventCallback.event.user, // For FIFO queues (if used)
+        })
+      );
+
+      console.log('Event enqueued', {
+        event_id: eventId,
+        elapsed_ms: Date.now() - startTime,
+      });
+    } catch (error) {
+      console.error('Failed to enqueue event', { event_id: eventId, error });
+      return {
+        statusCode: 500,
+        body: 'Internal Server Error',
+      };
+    }
+
+    // Return 200 within 3 seconds (Requirement 3.1)
+    return {
+      statusCode: 200,
+      body: 'OK',
+    };
+  }
+
+  // Unknown request type
+  console.error('Unknown request type', { type: (request as { type: string }).type });
+  return {
+    statusCode: 400,
+    body: 'Bad Request',
+  };
+}
