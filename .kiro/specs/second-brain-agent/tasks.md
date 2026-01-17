@@ -59,21 +59,29 @@
   - Initialize with system prompt file path
   - **Validates: Requirements 11, 29, 40**
 
-- [ ] 3.3 Create Worker Lambda function
+- [ ] 3.3 Create Bedrock Agent for classification
+  - Define Bedrock Agent with Claude-class foundation model
+  - Configure Agent Instructions (static safety constraints, output contract)
+  - Parameterize model ID per environment
+  - Create agent alias for invocation
+  - **Validates: Requirements 6.3, 41**
+
+- [ ] 3.4 Create Worker Lambda function
   - Define Lambda function with Node.js 20 runtime
   - Configure SQS event source from Ingress queue
-  - Set timeout appropriate for AgentCore calls (30s)
+  - Set timeout appropriate for Bedrock Agent calls (30s)
+  - Set environment variables: AGENT_ID, AGENT_ALIAS_ID, REPOSITORY_NAME
   - **Validates: Requirements 3, 28**
 
-- [ ] 3.4 Configure Worker Lambda permissions
+- [ ] 3.5 Configure Worker Lambda permissions
   - Grant DynamoDB read/write for idempotency table
   - Grant CodeCommit read/write for repository
   - Grant SES send email permission
-  - Grant Bedrock AgentCore invoke permission
+  - Grant Bedrock Agent invoke permission (`bedrock:InvokeAgent`)
   - Grant SSM read for bot-token and maildrop-email
   - **Validates: Requirements 23, 25**
 
-- [ ] 3.5 Create SES email identity
+- [ ] 3.6 Create SES email identity
   - Define email identity for sender address
   - Configure for OmniFocus Mail Drop sending
   - **Validates: Requirements 17, 28**
@@ -256,9 +264,9 @@
 
 - [ ] 11.1 Implement Bedrock Agent Runtime integration
   - Configure `@aws-sdk/client-bedrock-agent-runtime` client
-  - Use `InvokeAgentCommand` to invoke pre-built Bedrock Agent
-  - Send message with system prompt context
-  - Parse Action Plan from streaming response
+  - Use `InvokeAgentCommand` to invoke Bedrock Agent
+  - Construct prompt: system prompt (from CodeCommit) + user message
+  - Parse Action Plan JSON from streaming response
   - **Validates: Requirements 6.3, 40.2**
 
 - [ ] 11.2 Implement confidence bouncer logic
@@ -559,6 +567,13 @@
   - Include Classification Rules, Confidence Bouncer
   - Include Output Contract, Forbidden Behaviors
   - **Validates: Requirements 40, 41**
+
+- [ ] 23.2 Bootstrap CodeCommit repository
+  - Create initial commit with system prompt file
+  - Create folder structure: `00-inbox/`, `10-ideas/`, `20-decisions/`, `30-projects/`, `90-receipts/`
+  - Add `.gitkeep` files to empty folders
+  - Document bootstrap process in README
+  - **Validates: Requirements 29, 40**
 
 ## Task 24: Deployment and Documentation
 

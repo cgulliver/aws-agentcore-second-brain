@@ -2,7 +2,21 @@
 
 ## Overview
 
-The Second Brain Agent is a serverless system that provides a DM-only Slack interface for personal knowledge capture, classification, and routing. The system uses Amazon Bedrock AgentCore for intelligent classification, AWS CodeCommit for durable Markdown storage, and AWS SES for routing tasks to OmniFocus via Mail Drop.
+The Second Brain Agent is a serverless system that provides a DM-only Slack interface for personal knowledge capture, classification, and routing. The system uses Amazon Bedrock Agents for intelligent classification and planning, AWS CodeCommit for durable Markdown storage, and AWS SES for routing tasks to OmniFocus via Mail Drop.
+
+### Agent Execution Model
+
+The system uses a **Bedrock Agent + Lambda Orchestrator** pattern:
+
+| Component | Responsibility | Does NOT |
+|-----------|----------------|----------|
+| **Bedrock Agent** | Classification, reasoning, Action Plan generation | Execute side effects, hold credentials |
+| **Lambda Orchestrator** | Invoke agent, validate Action Plan, execute all side effects | Classification, content generation |
+
+**Explicit Non-Goals (v1):**
+- Bedrock Agent Action Groups are NOT used
+- AgentCore Runtime is NOT used for classifier/planner execution
+- Agent does NOT call CodeCommit, SES, or Slack directly
 
 ### Key Design Principles
 
@@ -94,8 +108,8 @@ User DM → Slack Events API → Lambda Function URL → Ingress Lambda → SQS 
 | Layer | Component | Responsibilities | Does NOT |
 |-------|-----------|------------------|----------|
 | **Infrastructure** | Ingress Lambda | Signature verification, ACK, enqueue | Process messages, call Bedrock |
-| **Infrastructure** | Worker Lambda | Idempotency, invoke agent, Slack I/O | Classification, content generation |
-| **Agent Logic** | Bedrock Agent | Classification, Action Plan, side effects | Slack I/O, hold credentials |
+| **Infrastructure** | Worker Lambda | Idempotency, invoke agent, execute side effects, Slack I/O | Classification, content generation |
+| **Agent Logic** | Bedrock Agent | Classification, Action Plan generation | Side effects, credentials |
 | **Storage** | CodeCommit | Durable knowledge, receipts, system prompt | Idempotency, preferences |
 | **Storage** | DynamoDB | Idempotency, conversation context | Knowledge storage |
 | **Storage** | AgentCore Memory | Behavioral preferences (advisory) | Durable knowledge, receipts |
@@ -154,31 +168,35 @@ Responsibilities:
 
 ### Worker Lambda
 
-> **Key Principle: AgentCore does NOT talk to Slack directly.**
+> **Key Principle: Bedrock Agent does NOT execute side effects.**
 >
-> Slack is answered by Lambda (infrastructure layer), not by AgentCore.
-> AgentCore returns a response payload to Lambda, which is solely responsible for formatting and delivering responses to Slack via the Web API.
+> The Bedrock Agent returns an Action Plan JSON to Lambda.
+> Lambda validates the plan and executes all side effects (CodeCommit, SES, Slack).
+> This separation ensures testability, idempotency, and credential isolation.
 
-**Worker Lambda Responsibilities (Infrastructure Layer):**
+**Worker Lambda Responsibilities (Orchestrator):**
 - Receive events from SQS
 - Check idempotency (DynamoDB conditional write on `event_id`)
-- Invoke AgentCore Runtime with normalized payload
-- Receive structured response from AgentCore
+- Load system prompt from CodeCommit
+- Invoke Bedrock Agent via `InvokeAgentCommand`
+- Validate Action Plan JSON against schema
+- Execute side effects in order: CodeCommit → SES → Slack
+- Write receipt to CodeCommit
 - Format and deliver response to Slack (Web API)
-- Hold Slack credentials (bot token from SSM)
+- Hold all credentials (Slack bot token, SES sender)
 
-**AgentCore Runtime Responsibilities (Agent Logic):**
+**Bedrock Agent Responsibilities (Reasoning Only):**
 - Classification (inbox/idea/decision/project/task)
-- Action Plan generation
-- CodeCommit writes (knowledge artifacts, receipts)
-- SES email (tasks to OmniFocus)
-- AgentCore Memory (behavioral context)
+- Confidence scoring
+- Action Plan JSON generation
+- Reasoning and explanation
 
-**AgentCore does NOT:**
-- Hold Slack credentials
-- Call Slack webhooks or Web API
-- Know about channels, threads, or users
-- Maintain HTTP sessions
+**Bedrock Agent does NOT:**
+- Execute CodeCommit writes
+- Send SES emails
+- Call Slack APIs
+- Hold any credentials
+- Perform any side effects
 
 ### Idempotency Strategy
 
@@ -258,7 +276,32 @@ function handleSlackRequest(
 
 ### 2. Classifier Component
 
-> **SDK:** Uses `@aws-sdk/client-bedrock-agent-runtime` with `InvokeAgentCommand` to invoke a pre-built Bedrock Agent. NOT AgentCore Runtime.
+> **SDK:** Uses `@aws-sdk/client-bedrock-agent-runtime` with `InvokeAgentCommand`.
+> **NOT** AgentCore Runtime. Agent returns Action Plan JSON only; Lambda executes side effects.
+
+#### Agent Instructions vs System Prompt
+
+| Aspect | Agent Instructions | System Prompt |
+|--------|-------------------|---------------|
+| **Location** | Bedrock Agent console/CDK | CodeCommit `/system/agent-system-prompt.md` |
+| **Content** | Safety constraints, output contract, role | Classification rules, templates, taxonomy |
+| **Mutability** | Rarely changed | Versioned, auditable, frequently tuned |
+| **Deployment** | CDK deploy | Git commit |
+
+**Agent Instructions (Static)** — configured on Bedrock Agent:
+```
+You are a Second Brain classifier agent. You MUST:
+1. Output ONLY valid Action Plan JSON
+2. Never execute side effects
+3. Never hallucinate file paths
+4. Always include confidence scores
+```
+
+**System Prompt (Dynamic)** — loaded from CodeCommit at runtime:
+- Classification rules and signals
+- Confidence thresholds
+- Markdown templates
+- Taxonomy definitions
 
 ```typescript
 type Classification = 'inbox' | 'idea' | 'decision' | 'project' | 'task';

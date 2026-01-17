@@ -11,13 +11,25 @@ This steering file provides concrete TypeScript SDK v3 patterns and code example
 
 ## Architecture: Separation of Concerns
 
-> **Key Principle: AgentCore does NOT talk to Slack directly.**
+> **Key Principle: Bedrock Agent does NOT execute side effects.**
 >
-> Slack is answered by your infrastructure (Lambda), not by AgentCore itself.
-> AgentCore only returns an agent response payload to whoever invoked it.
-> That invoker (Lambda) is responsible for replying to Slack.
+> The Bedrock Agent returns an Action Plan JSON to Lambda.
+> Lambda validates the plan and executes all side effects (CodeCommit, SES, Slack).
+> This separation ensures testability, idempotency, and credential isolation.
 
-### Response Flow: Slack → AgentCore → Slack
+### Agent Execution Model
+
+| Component | Responsibility | Does NOT |
+|-----------|----------------|----------|
+| **Bedrock Agent** | Classification, reasoning, Action Plan JSON | Execute side effects, hold credentials |
+| **Lambda Orchestrator** | Invoke agent, validate plan, execute side effects | Classification, content generation |
+
+**Explicit Non-Goals (v1):**
+- Bedrock Agent Action Groups are NOT used
+- AgentCore Runtime is NOT used
+- Agent does NOT call CodeCommit, SES, or Slack directly
+
+### Response Flow: Slack → Bedrock Agent → Lambda → Side Effects
 
 ```
 Slack
@@ -32,60 +44,62 @@ Lambda Function URL (Ingress)
 SQS Queue
   │
   ▼
-Worker Lambda (Infrastructure Layer)
+Worker Lambda (Orchestrator)
   │  • Check idempotency (DynamoDB)
-  │  • Invoke AgentCore Runtime
-  │  • Format response for Slack
+  │  • Load system prompt (CodeCommit)
+  │  • Invoke Bedrock Agent
+  │  • Validate Action Plan JSON
+  │  • Execute side effects
   │  • Send to Slack Web API
   │
   ├────────────────────────────────┐
   │                                │
   ▼                                ▼
-AgentCore Runtime              Slack Web API
-  │  • Classification              • chat.postMessage
-  │  • Action Plan                 • Threaded replies
-  │  • CodeCommit writes           • Error messages
-  │  • SES email (tasks)
-  │  • AgentCore Memory
-  │
+Bedrock Agent                  Side Effects (Lambda executes)
+  │  • Classification              • CodeCommit writes
+  │  • Action Plan JSON            • SES email (tasks)
+  │  • Reasoning                   • Slack replies
+  │                                • Receipt logging
   ▼
-Returns structured payload to Lambda
+Returns Action Plan JSON to Lambda
 ```
 
-### What AgentCore Runtime Does
+### What Bedrock Agent Does
 
 | Responsibility | Details |
 |----------------|---------|
 | Classification | Classify message as inbox/idea/decision/project/task |
+| Confidence | Score confidence 0.0-1.0 |
 | Action Plan | Generate structured Action Plan JSON |
-| CodeCommit writes | Create commits for knowledge artifacts |
-| SES email | Send task emails to OmniFocus Mail Drop |
-| AgentCore Memory | Read/write behavioral context (preferences, assumptions) |
-| Receipt logging | Append receipts to `90-receipts/receipts.jsonl` |
+| Reasoning | Explain classification decision |
 
-### What AgentCore Runtime Does NOT Do
+### What Bedrock Agent Does NOT Do
 
 | ❌ Does NOT | Why |
 |-------------|-----|
-| Hold Slack credentials | Security: tokens stay in Lambda |
-| Call Slack webhooks | Portability: same agent works for Slack, web UI, CLI |
-| Know about channels/threads/users | Abstraction: agent is Slack-agnostic |
-| Maintain HTTP sessions | Control: Lambda handles Slack timeouts |
+| Execute CodeCommit writes | Lambda handles all side effects |
+| Send SES emails | Lambda handles all side effects |
+| Call Slack APIs | Lambda handles all Slack I/O |
+| Hold credentials | Security: credentials stay in Lambda |
+| Perform any side effects | Testability, idempotency, isolation |
 
-### What Lambda (Infrastructure Layer) Does
+### What Lambda (Orchestrator) Does
 
 | Responsibility | Details |
 |----------------|---------|
 | Slack signature verification | HMAC-SHA256 with signing secret |
 | Idempotency | DynamoDB conditional writes on `event_id` |
-| Invoke AgentCore | Pass normalized payload, receive response |
+| Load system prompt | Read from CodeCommit on cold start |
+| Invoke Bedrock Agent | Pass system prompt + user message |
+| Validate Action Plan | JSON schema validation |
+| Execute side effects | CodeCommit → SES → Slack (in order) |
 | Slack I/O | Format and deliver responses via Web API |
-| Hold Slack credentials | Bot token loaded from SSM |
-| Timeout handling | ACK within 3s, async processing |
+| Hold credentials | Bot token, SES sender from SSM |
+| Error handling | Retries, DLQ, user notification |
 
 ### Canonical Spec Wording
 
-> "Slack integrations are terminated at Lambda Function URL and handled by Lambda. Lambda invokes AgentCore Runtime to execute agent logic. AgentCore returns results to Lambda, which is solely responsible for formatting and delivering responses back to Slack via the Slack Web API."
+> "Lambda invokes Bedrock Agent Runtime to obtain an Action Plan. The agent performs classification and reasoning only. Lambda validates the Action Plan and executes all side effects (CodeCommit writes, SES emails, Slack replies). The agent never holds credentials or performs side effects directly."
 
 ---
 
@@ -529,7 +543,7 @@ Or reply \`reclassify: <type>\` to specify directly.`;
 
 ### Bedrock Agent Runtime Integration
 
-The Second Brain Agent uses Bedrock Agent Runtime to invoke a pre-configured agent for classification and action plan generation.
+The Worker Lambda invokes the Bedrock Agent to get an Action Plan, then executes all side effects itself.
 
 ```typescript
 import {
@@ -542,12 +556,14 @@ const bedrockAgent = new BedrockAgentRuntimeClient({ region: process.env.AWS_REG
 /**
  * Invokes the Second Brain agent to classify a message and generate an Action Plan.
  * 
+ * NOTE: The agent returns Action Plan JSON only. Lambda executes all side effects.
+ * 
  * @param agentId - The Bedrock Agent ID
- * @param agentAliasId - The Agent Alias ID (use TSTALIASID for draft)
+ * @param agentAliasId - The Agent Alias ID
  * @param sessionId - Session ID for conversation continuity (use Slack channel_id + user_id)
  * @param inputText - The user's message to classify
- * @param systemPrompt - The system prompt loaded from CodeCommit
- * @returns The complete response containing the Action Plan JSON
+ * @param systemPrompt - The dynamic system prompt loaded from CodeCommit
+ * @returns The Action Plan JSON string
  */
 export async function invokeClassifier(
   agentId: string,
@@ -556,7 +572,8 @@ export async function invokeClassifier(
   inputText: string,
   systemPrompt: string
 ): Promise<string> {
-  // Construct the full prompt with system context
+  // Construct the full prompt: dynamic system prompt + user message
+  // Agent Instructions (static) are already configured on the Bedrock Agent
   const fullPrompt = `${systemPrompt}
 
 ---
@@ -712,6 +729,69 @@ workerLambda.addEventSource(new SqsEventSource(queue, {
   maxBatchingWindow: cdk.Duration.seconds(0),
   reportBatchItemFailures: true,
 }));
+```
+
+### Bedrock Agent Creation
+
+```typescript
+import * as bedrock from 'aws-cdk-lib/aws-bedrock';
+import * as iam from 'aws-cdk-lib/aws-iam';
+
+// Agent execution role
+const agentRole = new iam.Role(this, 'AgentRole', {
+  assumedBy: new iam.ServicePrincipal('bedrock.amazonaws.com'),
+  description: 'Role for Second Brain classifier agent',
+});
+
+// Bedrock Agent (L1 construct - CfnAgent)
+const agent = new bedrock.CfnAgent(this, 'ClassifierAgent', {
+  agentName: 'second-brain-classifier',
+  description: 'Classifies messages and generates Action Plans',
+  agentResourceRoleArn: agentRole.roleArn,
+  foundationModel: 'anthropic.claude-3-sonnet-20240229-v1:0', // Parameterize per env
+  idleSessionTtlInSeconds: 600,
+  instruction: `You are a Second Brain classifier agent. Your ONLY job is to:
+1. Classify the user's message as exactly one of: inbox, idea, decision, project, task
+2. Output a valid Action Plan JSON object
+3. NEVER execute side effects - only return the plan
+
+You MUST output valid JSON matching this schema:
+{
+  "classification": "inbox|idea|decision|project|task",
+  "confidence": 0.0-1.0,
+  "needs_clarification": boolean,
+  "clarification_prompt": "string (if needs_clarification)",
+  "file_operations": [...],
+  "commit_message": "string",
+  "omnifocus_email": {...} | null,
+  "slack_reply_text": "string"
+}
+
+FORBIDDEN:
+- Do not hallucinate file paths
+- Do not execute any side effects
+- Do not deviate from the JSON schema`,
+});
+
+// Agent alias for invocation
+const agentAlias = new bedrock.CfnAgentAlias(this, 'ClassifierAgentAlias', {
+  agentId: agent.attrAgentId,
+  agentAliasName: 'live',
+  description: 'Production alias for classifier agent',
+});
+
+// Grant Lambda permission to invoke agent
+workerLambda.addToRolePolicy(new iam.PolicyStatement({
+  actions: ['bedrock:InvokeAgent'],
+  resources: [
+    `arn:aws:bedrock:${this.region}:${this.account}:agent/${agent.attrAgentId}`,
+    `arn:aws:bedrock:${this.region}:${this.account}:agent-alias/${agent.attrAgentId}/*`,
+  ],
+}));
+
+// Pass agent IDs to Lambda
+workerLambda.addEnvironment('AGENT_ID', agent.attrAgentId);
+workerLambda.addEnvironment('AGENT_ALIAS_ID', agentAlias.attrAgentAliasId);
 ```
 
 ## Property-Based Testing with fast-check
