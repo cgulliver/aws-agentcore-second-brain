@@ -2,19 +2,19 @@
 
 ## Task 1: Project Setup and CDK Foundation
 
-- [ ] 1.1 Initialize CDK TypeScript project with two-stack architecture
+- [x] 1.1 Initialize CDK TypeScript project with two-stack architecture
   - Create `cdk.json`, `tsconfig.json`, `package.json`
   - Configure CDK app entry point
   - Set up `lib/ingress-stack.ts` and `lib/core-stack.ts` scaffolds
   - **Validates: Requirement 28**
 
-- [ ] 1.2 Configure TypeScript and testing infrastructure
+- [x] 1.2 Configure TypeScript and testing infrastructure
   - Install dependencies: `aws-cdk-lib`, `constructs`, `esbuild`, `vitest`, `fast-check`
   - Configure `vitest.config.ts` for unit and property tests
   - Set up `test/` directory structure per design
   - **Validates: Requirement 28**
 
-- [ ] 1.3 Create shared types and interfaces
+- [x] 1.3 Create shared types and interfaces
   - Create `src/types/slack.ts` with Slack event interfaces
   - Create `src/types/classification.ts` with Classification type
   - Create `src/types/receipt.ts` with Receipt interface
