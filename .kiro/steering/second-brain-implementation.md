@@ -9,57 +9,83 @@ This steering file provides concrete TypeScript SDK v3 patterns and code example
 
 ---
 
-## Architecture Decision: Agent Runtime Clarification
+## Architecture: Separation of Concerns
 
-> **IMPORTANT**: There are two different "agent runtime" concepts in AWS Bedrock:
+> **Key Principle: AgentCore does NOT talk to Slack directly.**
 >
-> 1. **Bedrock Agent Runtime API** (`@aws-sdk/client-bedrock-agent-runtime`) — An API you **invoke** from Lambda to call a pre-built Bedrock Agent
-> 2. **AgentCore Runtime** (`@aws-cdk/aws-bedrock-agentcore-alpha`) — A managed service that **hosts** your agent code (container or ZIP)
->
-> **This system uses Option 1.**
+> Slack is answered by your infrastructure (Lambda), not by AgentCore itself.
+> AgentCore only returns an agent response payload to whoever invoked it.
+> That invoker (Lambda) is responsible for replying to Slack.
 
-### Decision Record
-
-**Classification is implemented as a Bedrock Agent (Agent Runtime), invoked by Lambda. AgentCore Runtime is NOT used for the classifier worker.**
-
-**Rationale:**
-- Classification is a simple, single-step LLM call — no complex multi-step autonomous workflow
-- Lambda architecture is simpler, cheaper, and sufficient for our needs
-- Keeps infrastructure minimal (Lambda + SQS + DynamoDB)
-
-**Memory Strategy:**
-- **AgentCore Memory** remains the long-lived behavioral/context store (preferences, operating assumptions, clarification state)
-- **DynamoDB** handles idempotency and structured state
-- **Git (CodeCommit)** is the durable source of truth for all knowledge
-
-**Future Option:**
-If classification grows into a complex, multi-step autonomous workflow, we may migrate that worker to AgentCore Runtime.
-
----
-
-## Classifier Worker Architecture
+### Response Flow: Slack → AgentCore → Slack
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         Classifier Worker (Lambda)                          │
-│                                                                             │
-│  1. Receive SQS message (Slack event)                                      │
-│  2. Check idempotency (DynamoDB conditional write)                         │
-│  3. Call Bedrock Agent Runtime InvokeAgent ← NOT AgentCore Runtime         │
-│     └─ Receives: classification, confidence, Action Plan JSON              │
-│  4. Validate Action Plan                                                   │
-│  5. Execute side effects (commit → email → slack)                          │
-│  6. Write receipt to CodeCommit                                            │
-└─────────────────────────────────────────────────────────────────────────────┘
+Slack
+  │
+  ▼
+Lambda Function URL (Ingress)
+  │  • Verify Slack signature
+  │  • ACK immediately (200 OK)
+  │  • Enqueue to SQS
+  │
+  ▼
+SQS Queue
+  │
+  ▼
+Worker Lambda (Infrastructure Layer)
+  │  • Check idempotency (DynamoDB)
+  │  • Invoke AgentCore Runtime
+  │  • Format response for Slack
+  │  • Send to Slack Web API
+  │
+  ├────────────────────────────────┐
+  │                                │
+  ▼                                ▼
+AgentCore Runtime              Slack Web API
+  │  • Classification              • chat.postMessage
+  │  • Action Plan                 • Threaded replies
+  │  • CodeCommit writes           • Error messages
+  │  • SES email (tasks)
+  │  • AgentCore Memory
+  │
+  ▼
+Returns structured payload to Lambda
 ```
 
-### Key SDK Packages
+### What AgentCore Runtime Does
 
-| Purpose | Package | Usage |
-|---------|---------|-------|
-| Invoke Bedrock Agent | `@aws-sdk/client-bedrock-agent-runtime` | `InvokeAgentCommand` |
-| AgentCore Memory (behavioral context) | `bedrock-agentcore` (Python) | Store preferences, clarification state |
-| CDK for AgentCore Memory | `@aws-cdk/aws-bedrock-agentcore-alpha` | Provision Memory resource |
+| Responsibility | Details |
+|----------------|---------|
+| Classification | Classify message as inbox/idea/decision/project/task |
+| Action Plan | Generate structured Action Plan JSON |
+| CodeCommit writes | Create commits for knowledge artifacts |
+| SES email | Send task emails to OmniFocus Mail Drop |
+| AgentCore Memory | Read/write behavioral context (preferences, assumptions) |
+| Receipt logging | Append receipts to `90-receipts/receipts.jsonl` |
+
+### What AgentCore Runtime Does NOT Do
+
+| ❌ Does NOT | Why |
+|-------------|-----|
+| Hold Slack credentials | Security: tokens stay in Lambda |
+| Call Slack webhooks | Portability: same agent works for Slack, web UI, CLI |
+| Know about channels/threads/users | Abstraction: agent is Slack-agnostic |
+| Maintain HTTP sessions | Control: Lambda handles Slack timeouts |
+
+### What Lambda (Infrastructure Layer) Does
+
+| Responsibility | Details |
+|----------------|---------|
+| Slack signature verification | HMAC-SHA256 with signing secret |
+| Idempotency | DynamoDB conditional writes on `event_id` |
+| Invoke AgentCore | Pass normalized payload, receive response |
+| Slack I/O | Format and deliver responses via Web API |
+| Hold Slack credentials | Bot token loaded from SSM |
+| Timeout handling | ACK within 3s, async processing |
+
+### Canonical Spec Wording
+
+> "Slack integrations are terminated at Lambda Function URL and handled by Lambda. Lambda invokes AgentCore Runtime to execute agent logic. AgentCore returns results to Lambda, which is solely responsible for formatting and delivering responses back to Slack via the Slack Web API."
 
 ---
 
@@ -96,37 +122,6 @@ const memory = new agentcore.Memory(this, 'SecondBrainMemory', {
   ],
 });
 ```
-
-### Memory Client Usage (Python — for reference)
-
-```python
-from bedrock_agentcore.memory import MemoryClient
-
-client = MemoryClient(region_name="us-east-1")
-
-# Store conversation event (short-term memory)
-client.create_event(
-    memory_id="your-memory-id",
-    actor_id="slack-user-U012ABCDEF",
-    session_id="channel-D012XYZ123",
-    messages=[
-        ("I prefer high confidence threshold", "USER"),
-        ("Noted. I'll use 0.9 as your confidence threshold.", "ASSISTANT"),
-    ],
-)
-
-# Retrieve preferences (long-term memory)
-memories = client.retrieve_memories(
-    memory_id="your-memory-id",
-    namespace="/preferences/slack-user-U012ABCDEF",
-    query="confidence threshold preference"
-)
-```
-
-> **Note:** AgentCore Memory SDK is Python-only. For TypeScript Lambda, either:
-> 1. Use AWS SDK directly with AgentCore Memory APIs
-> 2. Create a thin Python Lambda for memory operations
-> 3. Store preferences in DynamoDB (simpler for v1)
 
 ---
 

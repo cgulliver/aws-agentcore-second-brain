@@ -29,6 +29,77 @@ User DM → Slack Events API → Lambda Function URL → Ingress Lambda → SQS 
                                                                   Slack Reply
 ```
 
+### Detailed Sequence Diagram
+
+```
+┌──────┐     ┌───────────┐     ┌─────────┐     ┌─────┐     ┌────────┐     ┌──────────┐     ┌──────────┐     ┌─────┐     ┌───────────┐
+│ User │     │   Slack   │     │ Ingress │     │ SQS │     │ Worker │     │ DynamoDB │     │ Bedrock  │     │ Git │     │ Slack API │
+│      │     │ Events API│     │ Lambda  │     │     │     │ Lambda │     │          │     │  Agent   │     │     │     │           │
+└──┬───┘     └─────┬─────┘     └────┬────┘     └──┬──┘     └───┬────┘     └────┬─────┘     └────┬─────┘     └──┬──┘     └─────┬─────┘
+   │               │                │             │            │               │                │              │              │
+   │  DM message   │                │             │            │               │                │              │              │
+   │──────────────▶│                │             │            │               │                │              │              │
+   │               │                │             │            │               │                │              │              │
+   │               │ POST webhook   │             │            │               │                │              │              │
+   │               │───────────────▶│             │            │               │                │              │              │
+   │               │                │             │            │               │                │              │              │
+   │               │                │ Verify sig  │            │               │                │              │              │
+   │               │                │ + timestamp │            │               │                │              │              │
+   │               │                │             │            │               │                │              │              │
+   │               │   HTTP 200     │             │            │               │                │              │              │
+   │               │◀───────────────│             │            │               │                │              │              │
+   │               │                │             │            │               │                │              │              │
+   │               │                │ SendMessage │            │               │                │              │              │
+   │               │                │────────────▶│            │               │                │              │              │
+   │               │                │             │            │               │                │              │              │
+   │               │                │             │  Trigger   │               │                │              │              │
+   │               │                │             │───────────▶│               │                │              │              │
+   │               │                │             │            │               │                │              │              │
+   │               │                │             │            │ PutItem       │                │              │              │
+   │               │                │             │            │ (conditional) │                │              │              │
+   │               │                │             │            │──────────────▶│                │              │              │
+   │               │                │             │            │               │                │              │              │
+   │               │                │             │            │   Success     │                │              │              │
+   │               │                │             │            │◀──────────────│                │              │              │
+   │               │                │             │            │               │                │              │              │
+   │               │                │             │            │ InvokeAgent   │                │              │              │
+   │               │                │             │            │ (classify)    │                │              │              │
+   │               │                │             │            │──────────────────────────────▶│              │              │
+   │               │                │             │            │               │                │              │              │
+   │               │                │             │            │               │   Action Plan  │              │              │
+   │               │                │             │            │◀──────────────────────────────│              │              │
+   │               │                │             │            │               │                │              │              │
+   │               │                │             │            │ CreateCommit  │                │              │              │
+   │               │                │             │            │───────────────────────────────────────────▶│              │
+   │               │                │             │            │               │                │              │              │
+   │               │                │             │            │   commit_id   │                │              │              │
+   │               │                │             │            │◀──────────────────────────────────────────│              │
+   │               │                │             │            │               │                │              │              │
+   │               │                │             │            │ chat.postMessage               │              │              │
+   │               │                │             │            │─────────────────────────────────────────────────────────▶│
+   │               │                │             │            │               │                │              │              │
+   │               │                │             │            │   reply_ts    │                │              │              │
+   │               │                │             │            │◀─────────────────────────────────────────────────────────│
+   │               │                │             │            │               │                │              │              │
+   │               │                │             │            │ AppendReceipt │                │              │              │
+   │               │                │             │            │───────────────────────────────────────────▶│              │
+   │               │                │             │            │               │                │              │              │
+   │  Slack reply  │                │             │            │               │                │              │              │
+   │◀──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────│
+   │               │                │             │            │               │                │              │              │
+```
+
+### Separation of Concerns Summary
+
+| Layer | Component | Responsibilities | Does NOT |
+|-------|-----------|------------------|----------|
+| **Infrastructure** | Ingress Lambda | Signature verification, ACK, enqueue | Process messages, call Bedrock |
+| **Infrastructure** | Worker Lambda | Idempotency, invoke agent, Slack I/O | Classification, content generation |
+| **Agent Logic** | Bedrock Agent | Classification, Action Plan, side effects | Slack I/O, hold credentials |
+| **Storage** | CodeCommit | Durable knowledge, receipts, system prompt | Idempotency, preferences |
+| **Storage** | DynamoDB | Idempotency, conversation context | Knowledge storage |
+| **Storage** | AgentCore Memory | Behavioral preferences (advisory) | Durable knowledge, receipts |
+
 ## Architecture
 
 ### Component Architecture
@@ -83,26 +154,31 @@ Responsibilities:
 
 ### Worker Lambda
 
-Responsibilities:
-- Process events from SQS
-- Check idempotency (event_id already processed?)
-- Invoke Bedrock Agent (via Bedrock Agent Runtime) for classification
-- Apply confidence bouncer logic
-- Write to CodeCommit (knowledge) or send email (tasks)
-- Append receipt to receipts.jsonl
-- Reply to user via Slack Web API
+> **Key Principle: AgentCore does NOT talk to Slack directly.**
+>
+> Slack is answered by Lambda (infrastructure layer), not by AgentCore.
+> AgentCore returns a response payload to Lambda, which is solely responsible for formatting and delivering responses to Slack via the Web API.
 
-> **Architecture Decision: Agent Runtime Clarification**
->
-> There are two different "agent runtime" concepts in AWS Bedrock:
-> 1. **Bedrock Agent Runtime API** (`InvokeAgentCommand`) — An API you **invoke** to call a pre-built Bedrock Agent
-> 2. **AgentCore Runtime** — A managed service that **hosts** your agent code
->
-> **This system uses Bedrock Agent Runtime API (Option 1).** Classification is implemented as a Bedrock Agent invoked by Lambda. AgentCore Runtime is NOT used for the classifier worker because classification is a simple, single-step LLM call — no complex multi-step autonomous workflow is needed.
->
-> **Memory:** AgentCore Memory remains the long-lived behavioral/context store (preferences, operating assumptions, clarification state), independent of the classifier's runtime.
->
-> **Future Option:** If classification grows into a complex, multi-step autonomous workflow, we may migrate that worker to AgentCore Runtime.
+**Worker Lambda Responsibilities (Infrastructure Layer):**
+- Receive events from SQS
+- Check idempotency (DynamoDB conditional write on `event_id`)
+- Invoke AgentCore Runtime with normalized payload
+- Receive structured response from AgentCore
+- Format and deliver response to Slack (Web API)
+- Hold Slack credentials (bot token from SSM)
+
+**AgentCore Runtime Responsibilities (Agent Logic):**
+- Classification (inbox/idea/decision/project/task)
+- Action Plan generation
+- CodeCommit writes (knowledge artifacts, receipts)
+- SES email (tasks to OmniFocus)
+- AgentCore Memory (behavioral context)
+
+**AgentCore does NOT:**
+- Hold Slack credentials
+- Call Slack webhooks or Web API
+- Know about channels, threads, or users
+- Maintain HTTP sessions
 
 ### Idempotency Strategy
 
@@ -378,6 +454,59 @@ function sendSlackReply(
   config: SlackResponderConfig,
   reply: SlackReply
 ): Promise<void>;
+```
+
+#### Slack Response Patterns
+
+The system uses different Slack response patterns depending on the context:
+
+| Scenario | Response Type | Method | Behavior |
+|----------|---------------|--------|----------|
+| **Successful capture** | Threaded reply | `chat.postMessage` with `thread_ts` | Reply in thread to original message |
+| **Clarification needed** | Threaded reply | `chat.postMessage` with `thread_ts` | Reply in thread, await user response |
+| **Validation error** | Threaded reply | `chat.postMessage` with `thread_ts` | Error message in thread |
+| **Fix confirmation** | Threaded reply | `chat.postMessage` with `thread_ts` | Confirm fix applied in thread |
+
+**Why Threaded Replies (not ephemeral or modal):**
+- **Threaded**: Creates a conversation history the user can reference
+- **Not ephemeral**: User needs persistent confirmation of what was captured
+- **Not modal**: DM context doesn't support modals; threaded replies are simpler
+
+**Response Format Examples:**
+
+```
+# Successful capture (inbox)
+Captured as *inbox*
+Files: 00-inbox/2026-01-17.md
+Commit: `a1b2c3d`
+
+Reply `fix: <instruction>` to correct.
+
+# Successful capture (idea)
+Captured as *idea*
+Files: 10-ideas/migration-debt.md
+Commit: `d4e5f6g`
+
+Reply `fix: <instruction>` to correct.
+
+# Successful capture (task)
+Captured as *task*
+Task sent to OmniFocus: "Review Q1 budget"
+
+Reply `fix: <instruction>` to correct.
+
+# Clarification needed
+I'm not sure how to classify this. Is it:
+• *idea* — a conceptual insight or observation
+• *decision* — a commitment you've made
+• *task* — something you need to do
+
+Or reply `reclassify: <type>` to specify directly.
+
+# Validation error
+I couldn't process that message. Please try rephrasing.
+
+Error: Invalid classification in Action Plan
 ```
 
 ### 7. ConversationContext Component

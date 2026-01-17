@@ -254,10 +254,11 @@
 
 ## Task 11: Classifier Component
 
-- [ ] 11.1 Implement Bedrock AgentCore integration
-  - Configure AgentCore client
-  - Send message with system prompt
-  - Parse Action Plan from response
+- [ ] 11.1 Implement Bedrock Agent Runtime integration
+  - Configure `@aws-sdk/client-bedrock-agent-runtime` client
+  - Use `InvokeAgentCommand` to invoke pre-built Bedrock Agent
+  - Send message with system prompt context
+  - Parse Action Plan from streaming response
   - **Validates: Requirements 6.3, 40.2**
 
 - [ ] 11.2 Implement confidence bouncer logic
@@ -380,11 +381,12 @@
   - **Validates: Requirements 3.3, 40.2**
 
 - [ ] 17.2 Implement main processing flow
-  - Check idempotency (DynamoDB)
-  - Classify message (AgentCore)
-  - Validate Action Plan
-  - Execute Action Plan (commit → email → slack)
-  - Write receipt
+  - Check idempotency (DynamoDB conditional write)
+  - Invoke Bedrock Agent for classification and Action Plan
+  - Validate Action Plan against schema
+  - Execute side effects in order: CodeCommit → SES → Slack
+  - Format and deliver response to Slack (Lambda responsibility)
+  - Write receipt to CodeCommit
   - **Validates: Requirements 6, 11, 15, 17, 42-44**
 
 - [ ] 17.3 Implement error handling
