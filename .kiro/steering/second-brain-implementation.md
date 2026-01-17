@@ -7,6 +7,129 @@ fileMatchPattern: "src/**/*.ts,lib/**/*.ts,test/**/*.ts"
 
 This steering file provides concrete TypeScript SDK v3 patterns and code examples for implementing the Second Brain Agent system.
 
+---
+
+## Architecture Decision: Agent Runtime Clarification
+
+> **IMPORTANT**: There are two different "agent runtime" concepts in AWS Bedrock:
+>
+> 1. **Bedrock Agent Runtime API** (`@aws-sdk/client-bedrock-agent-runtime`) — An API you **invoke** from Lambda to call a pre-built Bedrock Agent
+> 2. **AgentCore Runtime** (`@aws-cdk/aws-bedrock-agentcore-alpha`) — A managed service that **hosts** your agent code (container or ZIP)
+>
+> **This system uses Option 1.**
+
+### Decision Record
+
+**Classification is implemented as a Bedrock Agent (Agent Runtime), invoked by Lambda. AgentCore Runtime is NOT used for the classifier worker.**
+
+**Rationale:**
+- Classification is a simple, single-step LLM call — no complex multi-step autonomous workflow
+- Lambda architecture is simpler, cheaper, and sufficient for our needs
+- Keeps infrastructure minimal (Lambda + SQS + DynamoDB)
+
+**Memory Strategy:**
+- **AgentCore Memory** remains the long-lived behavioral/context store (preferences, operating assumptions, clarification state)
+- **DynamoDB** handles idempotency and structured state
+- **Git (CodeCommit)** is the durable source of truth for all knowledge
+
+**Future Option:**
+If classification grows into a complex, multi-step autonomous workflow, we may migrate that worker to AgentCore Runtime.
+
+---
+
+## Classifier Worker Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         Classifier Worker (Lambda)                          │
+│                                                                             │
+│  1. Receive SQS message (Slack event)                                      │
+│  2. Check idempotency (DynamoDB conditional write)                         │
+│  3. Call Bedrock Agent Runtime InvokeAgent ← NOT AgentCore Runtime         │
+│     └─ Receives: classification, confidence, Action Plan JSON              │
+│  4. Validate Action Plan                                                   │
+│  5. Execute side effects (commit → email → slack)                          │
+│  6. Write receipt to CodeCommit                                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Key SDK Packages
+
+| Purpose | Package | Usage |
+|---------|---------|-------|
+| Invoke Bedrock Agent | `@aws-sdk/client-bedrock-agent-runtime` | `InvokeAgentCommand` |
+| AgentCore Memory (behavioral context) | `bedrock-agentcore` (Python) | Store preferences, clarification state |
+| CDK for AgentCore Memory | `@aws-cdk/aws-bedrock-agentcore-alpha` | Provision Memory resource |
+
+---
+
+## AgentCore Memory Integration
+
+AgentCore Memory is used for **behavioral context only** — NOT for durable knowledge storage.
+
+### What Goes in AgentCore Memory
+
+| Category | Example | Store Here? |
+|----------|---------|-------------|
+| User preferences | "confidence threshold = 0.85" | ✓ Yes |
+| Operating assumptions | "tasks go to OmniFocus" | ✓ Yes |
+| Clarification state | "awaiting classification response" | ✓ Yes (short-lived) |
+| Full notes | idea content, decision rationale | ✗ No (Git only) |
+| Receipts | audit log entries | ✗ No (Git only) |
+| Idempotency keys | event_id tracking | ✗ No (DynamoDB only) |
+
+### Memory Strategies (LTM)
+
+For behavioral context, use these built-in strategies:
+
+```typescript
+// CDK: Create AgentCore Memory with strategies
+import * as agentcore from '@aws-cdk/aws-bedrock-agentcore-alpha';
+
+const memory = new agentcore.Memory(this, 'SecondBrainMemory', {
+  memoryName: 'second_brain_behavioral_context',
+  description: 'Behavioral context for Second Brain agent',
+  expirationDuration: cdk.Duration.days(90),
+  memoryStrategies: [
+    agentcore.MemoryStrategy.usingBuiltInUserPreference(), // Learn user preferences
+    agentcore.MemoryStrategy.usingBuiltInSummarization(),  // Session summaries
+  ],
+});
+```
+
+### Memory Client Usage (Python — for reference)
+
+```python
+from bedrock_agentcore.memory import MemoryClient
+
+client = MemoryClient(region_name="us-east-1")
+
+# Store conversation event (short-term memory)
+client.create_event(
+    memory_id="your-memory-id",
+    actor_id="slack-user-U012ABCDEF",
+    session_id="channel-D012XYZ123",
+    messages=[
+        ("I prefer high confidence threshold", "USER"),
+        ("Noted. I'll use 0.9 as your confidence threshold.", "ASSISTANT"),
+    ],
+)
+
+# Retrieve preferences (long-term memory)
+memories = client.retrieve_memories(
+    memory_id="your-memory-id",
+    namespace="/preferences/slack-user-U012ABCDEF",
+    query="confidence threshold preference"
+)
+```
+
+> **Note:** AgentCore Memory SDK is Python-only. For TypeScript Lambda, either:
+> 1. Use AWS SDK directly with AgentCore Memory APIs
+> 2. Create a thin Python Lambda for memory operations
+> 3. Store preferences in DynamoDB (simpler for v1)
+
+---
+
 ## AWS SDK v3 Patterns
 
 ### Lambda Function URL Handler

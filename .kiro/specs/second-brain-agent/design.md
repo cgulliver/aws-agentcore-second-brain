@@ -86,11 +86,23 @@ Responsibilities:
 Responsibilities:
 - Process events from SQS
 - Check idempotency (event_id already processed?)
-- Invoke Bedrock AgentCore for classification
+- Invoke Bedrock Agent (via Bedrock Agent Runtime) for classification
 - Apply confidence bouncer logic
 - Write to CodeCommit (knowledge) or send email (tasks)
 - Append receipt to receipts.jsonl
 - Reply to user via Slack Web API
+
+> **Architecture Decision: Agent Runtime Clarification**
+>
+> There are two different "agent runtime" concepts in AWS Bedrock:
+> 1. **Bedrock Agent Runtime API** (`InvokeAgentCommand`) — An API you **invoke** to call a pre-built Bedrock Agent
+> 2. **AgentCore Runtime** — A managed service that **hosts** your agent code
+>
+> **This system uses Bedrock Agent Runtime API (Option 1).** Classification is implemented as a Bedrock Agent invoked by Lambda. AgentCore Runtime is NOT used for the classifier worker because classification is a simple, single-step LLM call — no complex multi-step autonomous workflow is needed.
+>
+> **Memory:** AgentCore Memory remains the long-lived behavioral/context store (preferences, operating assumptions, clarification state), independent of the classifier's runtime.
+>
+> **Future Option:** If classification grows into a complex, multi-step autonomous workflow, we may migrate that worker to AgentCore Runtime.
 
 ### Idempotency Strategy
 
@@ -170,6 +182,8 @@ function handleSlackRequest(
 
 ### 2. Classifier Component
 
+> **SDK:** Uses `@aws-sdk/client-bedrock-agent-runtime` with `InvokeAgentCommand` to invoke a pre-built Bedrock Agent. NOT AgentCore Runtime.
+
 ```typescript
 type Classification = 'inbox' | 'idea' | 'decision' | 'project' | 'task';
 
@@ -182,7 +196,8 @@ interface ClassificationResult {
 }
 
 interface ClassifierConfig {
-  agentCoreEndpoint: string;
+  agentId: string;              // Bedrock Agent ID
+  agentAliasId: string;         // Agent Alias ID (use TSTALIASID for draft)
   lowConfidenceThreshold: number;   // Default: 0.7
   highConfidenceThreshold: number;  // Default: 0.85
 }
