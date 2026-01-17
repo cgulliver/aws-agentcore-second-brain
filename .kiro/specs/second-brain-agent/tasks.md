@@ -127,67 +127,67 @@
 
 ## Task 4: Slack Ingress Component
 
-- [ ] 4.1 Implement Slack signature verification
+- [x] 4.1 Implement Slack signature verification
   - Implement `verifySlackSignature()` using HMAC-SHA256
   - Compute signature as `v0={timestamp}:{body}`
   - Compare with `x-slack-signature` header
   - **Validates: Requirements 1.1, 1.3**
 
-- [ ] 4.2 Implement timestamp validation
+- [x] 4.2 Implement timestamp validation
   - Implement `isValidTimestamp()` function
   - Reject timestamps older than 5 minutes
   - Reject timestamps in the future (with clock skew tolerance)
   - **Validates: Requirements 1.2, 1.4, 26.1, 26.2**
 
-- [ ] 4.3 Implement URL verification handler
+- [x] 4.3 Implement URL verification handler
   - Parse `url_verification` request type
   - Return challenge value with HTTP 200
   - **Validates: Requirements 2.1, 2.2**
 
-- [ ] 4.4 Implement event filtering
+- [x] 4.4 Implement event filtering
   - Implement `shouldProcessEvent()` function
   - Filter for `channel_type === 'im'` only
   - Reject events with `bot_id` field
   - Reject events with `subtype` field
   - **Validates: Requirements 4.1-4.3, 5.1-5.3**
 
-- [ ] 4.5 Implement SQS message enqueueing
+- [x] 4.5 Implement SQS message enqueueing
   - Format SQSEventMessage with required fields
   - Send to SQS queue
   - Return HTTP 200 immediately
   - **Validates: Requirements 3.1, 3.2, 3.3**
 
-- [ ] 4.6 Implement Ingress Lambda handler
+- [x] 4.6 Implement Ingress Lambda handler
   - Wire together signature verification, timestamp check, filtering, enqueueing
   - Handle errors with appropriate HTTP status codes
   - **Validates: Requirements 1-5**
 
 ## Task 5: Idempotency Guard Component
 
-- [ ] 5.1 Implement DynamoDB conditional write for lock acquisition
+- [x] 5.1 Implement DynamoDB conditional write for lock acquisition
   - Implement `tryAcquireLock()` with ConditionExpression
   - Set TTL to 7 days from now
   - Return false on ConditionalCheckFailedException
   - **Validates: Requirements 21.2, 21.3, 24a.4**
 
-- [ ] 5.2 Implement execution state tracking
+- [x] 5.2 Implement execution state tracking
   - Implement `updateExecutionState()` with status enum: `RECEIVED`, `PLANNED`, `EXECUTING`, `PARTIAL_FAILURE`, `SUCCEEDED`, `FAILED_PERMANENT`
   - Track per-step status: `codecommit_status`, `ses_status`, `slack_status`
   - Include `last_error`, `updated_at`, optional `retry_after` fields
   - **Validates: Requirements 44a.1-44a.5**
 
-- [ ] 5.3 Implement lock status updates
+- [x] 5.3 Implement lock status updates
   - Implement `markCompleted()` to update status to `SUCCEEDED`
   - Implement `markFailed()` to update status with error
   - Implement `markPartialFailure()` to update status with completed steps
   - **Validates: Requirements 20, 22, 44b.1**
 
-- [ ] 5.4 Implement duplicate detection
+- [x] 5.4 Implement duplicate detection
   - Implement `isProcessed()` to check if event_id exists
   - Return true if record exists and status is `SUCCEEDED`
   - **Validates: Requirements 19, 20, 22**
 
-- [ ] 5.5 Implement partial failure recovery
+- [x] 5.5 Implement partial failure recovery
   - Implement `getExecutionState()` to retrieve current state
   - Implement `getCompletedSteps()` to identify which steps succeeded
   - Support resuming execution at first failed step
@@ -195,19 +195,19 @@
 
 ## Task 6: Knowledge Store Component
 
-- [ ] 6.1 Implement CodeCommit file operations
+- [x] 6.1 Implement CodeCommit file operations
   - Implement `getLatestCommitId()` using GetBranch API
   - Implement `readFile()` using GetFile API
   - Implement `writeFile()` using CreateCommit API with parent reference
   - **Validates: Requirements 11, 12**
 
-- [ ] 6.2 Implement append-only file operations
+- [x] 6.2 Implement append-only file operations
   - Implement `appendToFile()` for inbox and receipts
   - Read existing content, append new content, commit
   - Ensure no modification of existing content
   - **Validates: Requirements 13.1, 13.2, 13.3**
 
-- [ ] 6.3 Implement path generation
+- [x] 6.3 Implement path generation
   - Implement `generateFilePath()` for each classification
   - inbox → `00-inbox/YYYY-MM-DD.md`
   - idea → `10-ideas/<slug>.md`
@@ -215,13 +215,13 @@
   - project → `30-projects/<project-slug>.md`
   - **Validates: Requirements 11.1-11.4, 29.3**
 
-- [ ] 6.4 Implement slug generation
+- [x] 6.4 Implement slug generation
   - Implement `generateSlug()` function
   - Lowercase, hyphen-separated, 3-8 words
   - ASCII characters only, no dates in idea slugs
   - **Validates: Requirements 30.1-30.4**
 
-- [ ] 6.5 Implement commit retry logic
+- [x] 6.5 Implement commit retry logic
   - Detect parent commit conflicts
   - Retry with updated parent commit reference
   - Maximum 3 retries
@@ -229,48 +229,48 @@
 
 ## Task 7: Receipt Logger Component
 
-- [ ] 7.1 Implement receipt creation
+- [x] 7.1 Implement receipt creation
   - Implement `createReceipt()` with all required fields
   - Include prompt_commit_id and prompt_sha256
   - Format as JSON Lines
   - **Validates: Requirements 15, 16, 36, 45**
 
-- [ ] 7.2 Implement receipt serialization
+- [x] 7.2 Implement receipt serialization
   - Implement `serializeReceipt()` to JSON string
   - Implement `parseReceipt()` from JSON string
   - Ensure single-line output
   - **Validates: Requirements 15.2, 36**
 
-- [ ] 7.3 Implement receipt appending
+- [x] 7.3 Implement receipt appending
   - Implement `appendReceipt()` using append-only pattern
   - Atomic write to `90-receipts/receipts.jsonl`
   - **Validates: Requirements 15.1, 15.3**
 
-- [ ] 7.4 Implement receipt lookup
+- [x] 7.4 Implement receipt lookup
   - Implement `findReceiptByEventId()` for fix operations
   - Parse receipts.jsonl and search for event_id
   - **Validates: Requirements 10.2, 19.2**
 
 ## Task 8: System Prompt Loader Component
 
-- [ ] 8.1 Implement system prompt loading
+- [x] 8.1 Implement system prompt loading
   - Implement `loadSystemPrompt()` from CodeCommit
   - Read from `/system/agent-system-prompt.md`
   - Cache prompt content and metadata
   - **Validates: Requirements 40.1, 40.2**
 
-- [ ] 8.2 Implement prompt hash computation
+- [x] 8.2 Implement prompt hash computation
   - Implement `computePromptHash()` using SHA-256
   - Store hash in SystemPromptMetadata
   - **Validates: Requirements 45.1, 45.2**
 
-- [ ] 8.3 Implement prompt fallback behavior
+- [x] 8.3 Implement prompt fallback behavior
   - If system prompt cannot be loaded, fall back to minimal safe prompt
   - Emit error-level logs when using fallback
   - Emit CloudWatch metrics for prompt load failures
   - **Validates: Requirements 40.5, 40.6**
 
-- [ ] 8.4 Implement prompt structure validation
+- [x] 8.4 Implement prompt structure validation
   - Implement `validatePromptStructure()` 
   - Check for required sections (Role, Classification Rules, Output Contract)
   - Log warnings for missing sections but continue with fallback
@@ -278,12 +278,12 @@
 
 ## Task 9: Action Plan Component
 
-- [ ] 9.1 Implement Action Plan JSON schema
+- [x] 9.1 Implement Action Plan JSON schema
   - Define JSON schema for ActionPlan validation
   - Include all required fields per design
   - **Validates: Requirements 42.2-42.5**
 
-- [ ] 9.2 Implement Action Plan validation
+- [x] 9.2 Implement Action Plan validation
   - Implement `validateActionPlan()` against schema
   - Return validation errors array
   - Check classification is valid enum value
@@ -291,7 +291,7 @@
   - Check file paths match taxonomy
   - **Validates: Requirements 43.1, 43.2**
 
-- [ ] 9.3 Implement LLM output parsing
+- [x] 9.3 Implement LLM output parsing
   - Implement `parseActionPlanFromLLM()` 
   - Extract JSON from LLM response
   - Handle malformed JSON gracefully
@@ -299,7 +299,7 @@
 
 ## Task 10: Action Plan Executor Component
 
-- [ ] 10.1 Implement side effect ordering
+- [x] 10.1 Implement side effect ordering
   - Execute CodeCommit writes first
   - Execute OmniFocus email second
   - Execute Slack reply third
@@ -307,31 +307,31 @@
   - Update execution state after each step
   - **Validates: Requirements 44.1, 44.2, 44a.3**
 
-- [ ] 10.2 Implement execution result tracking
+- [x] 10.2 Implement execution result tracking
   - Track which steps succeeded via execution state
   - Track which step failed (if any)
   - Include per-step status in receipt
   - **Validates: Requirements 44.3, 44a.2, 44a.3**
 
-- [ ] 10.3 Implement validation failure handling
+- [x] 10.3 Implement validation failure handling
   - On invalid Action Plan, skip all side effects
   - Send error reply to Slack
   - Create failure receipt with validation_errors
   - **Validates: Requirements 43.2, 43.3, 43.4**
 
-- [ ] 10.4 Implement rate limit handling for Slack API
+- [x] 10.4 Implement rate limit handling for Slack API
   - Detect 429 responses and honor `Retry-After` header
   - Implement bounded exponential backoff
   - Mark execution `PARTIAL_FAILURE` if retries exhausted
   - **Validates: Requirements 50.1, 50.2, 50.3**
 
-- [ ] 10.5 Implement rate limit handling for SES
+- [x] 10.5 Implement rate limit handling for SES
   - Detect throttling and transient send failures
   - Implement exponential backoff with configurable maximum
   - Mark execution `PARTIAL_FAILURE` if retries exhausted after prior success
   - **Validates: Requirements 50.4, 50.5**
 
-- [ ] 10.6 Implement partial failure recovery
+- [x] 10.6 Implement partial failure recovery
   - Check execution state for completed steps before execution
   - Skip already-completed steps on retry
   - Resume at first failed step
