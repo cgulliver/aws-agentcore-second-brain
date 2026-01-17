@@ -2,20 +2,36 @@
 
 ## Overview
 
-The Second Brain Agent is a serverless system that provides a DM-only Slack interface for personal knowledge capture, classification, and routing. The system uses Amazon Bedrock Agents for intelligent classification and planning, AWS CodeCommit for durable Markdown storage, and AWS SES for routing tasks to OmniFocus via Mail Drop.
+The Second Brain Agent is a serverless system that provides a DM-only Slack interface for personal knowledge capture, classification, and routing. The system uses Amazon Bedrock AgentCore for intelligent classification and planning, AWS CodeCommit for durable Markdown storage, and AWS SES for routing tasks to OmniFocus via Mail Drop.
+
+### Agent Platform Decision
+
+The system uses **Bedrock AgentCore** as the agent implementation.
+
+**Explicit Non-Usage** — The system does NOT use:
+- Bedrock Agents (`CfnAgent`, `CreateAgent`, `PrepareAgent`)
+- `InvokeAgentCommand`
+- Bedrock Agent Action Groups
+
+**Canonical Invocation Path:**
+```
+Slack → Lambda Function URL → Lambda → Bedrock AgentCore Runtime → Lambda → Slack
+```
+
+AgentCore is a hosted agent runtime, not a Bedrock Agent invocation surface.
 
 ### Agent Execution Model
 
-The system uses a **Bedrock Agent + Lambda Orchestrator** pattern:
+The system uses a **AgentCore + Lambda Orchestrator** pattern:
 
 | Component | Responsibility | Does NOT |
 |-----------|----------------|----------|
-| **Bedrock Agent** | Classification, reasoning, Action Plan generation | Execute side effects, hold credentials |
-| **Lambda Orchestrator** | Invoke agent, validate Action Plan, execute all side effects | Classification, content generation |
+| **AgentCore Runtime** | Classification, reasoning, Action Plan generation | Execute side effects, hold credentials |
+| **Lambda Orchestrator** | Invoke AgentCore, validate Action Plan, execute all side effects | Classification, content generation |
 
 **Explicit Non-Goals (v1):**
 - Bedrock Agent Action Groups are NOT used
-- AgentCore Runtime is NOT used for classifier/planner execution
+- AgentCore does NOT execute side effects directly
 - Agent does NOT call CodeCommit, SES, or Slack directly
 
 ### Key Design Principles
@@ -108,8 +124,8 @@ User DM → Slack Events API → Lambda Function URL → Ingress Lambda → SQS 
 | Layer | Component | Responsibilities | Does NOT |
 |-------|-----------|------------------|----------|
 | **Infrastructure** | Ingress Lambda | Signature verification, ACK, enqueue | Process messages, call Bedrock |
-| **Infrastructure** | Worker Lambda | Idempotency, invoke agent, execute side effects, Slack I/O | Classification, content generation |
-| **Agent Logic** | Bedrock Agent | Classification, Action Plan generation | Side effects, credentials |
+| **Infrastructure** | Worker Lambda | Idempotency, invoke AgentCore, execute side effects, Slack I/O | Classification, content generation |
+| **Agent Logic** | AgentCore Runtime | Classification, Action Plan generation | Side effects, credentials |
 | **Storage** | CodeCommit | Durable knowledge, receipts, system prompt | Idempotency, preferences |
 | **Storage** | DynamoDB | Idempotency, conversation context | Knowledge storage |
 | **Storage** | AgentCore Memory | Behavioral preferences (advisory) | Durable knowledge, receipts |
@@ -168,30 +184,30 @@ Responsibilities:
 
 ### Worker Lambda
 
-> **Key Principle: Bedrock Agent does NOT execute side effects.**
+> **Key Principle: AgentCore returns Action Plan only; Lambda executes all side effects.**
 >
-> The Bedrock Agent returns an Action Plan JSON to Lambda.
-> Lambda validates the plan and executes all side effects (CodeCommit, SES, Slack).
+> AgentCore Runtime performs classification and reasoning.
+> Lambda validates the Action Plan and executes all side effects (CodeCommit, SES, Slack).
 > This separation ensures testability, idempotency, and credential isolation.
 
 **Worker Lambda Responsibilities (Orchestrator):**
 - Receive events from SQS
 - Check idempotency (DynamoDB conditional write on `event_id`)
-- Load system prompt from CodeCommit
-- Invoke Bedrock Agent via `InvokeAgentCommand`
+- Load system prompt from CodeCommit (with fallback if missing)
+- Invoke AgentCore Runtime
 - Validate Action Plan JSON against schema
 - Execute side effects in order: CodeCommit → SES → Slack
 - Write receipt to CodeCommit
 - Format and deliver response to Slack (Web API)
 - Hold all credentials (Slack bot token, SES sender)
 
-**Bedrock Agent Responsibilities (Reasoning Only):**
+**AgentCore Runtime Responsibilities (Reasoning Only):**
 - Classification (inbox/idea/decision/project/task)
 - Confidence scoring
 - Action Plan JSON generation
 - Reasoning and explanation
 
-**Bedrock Agent does NOT:**
+**AgentCore does NOT:**
 - Execute CodeCommit writes
 - Send SES emails
 - Call Slack APIs
@@ -276,32 +292,25 @@ function handleSlackRequest(
 
 ### 2. Classifier Component
 
-> **SDK:** Uses `@aws-sdk/client-bedrock-agent-runtime` with `InvokeAgentCommand`.
-> **NOT** AgentCore Runtime. Agent returns Action Plan JSON only; Lambda executes side effects.
+> **Platform:** Bedrock AgentCore Runtime (NOT Bedrock Agents)
+> AgentCore returns Action Plan JSON only; Lambda executes side effects.
 
 #### Agent Instructions vs System Prompt
 
 | Aspect | Agent Instructions | System Prompt |
 |--------|-------------------|---------------|
-| **Location** | Bedrock Agent console/CDK | CodeCommit `/system/agent-system-prompt.md` |
+| **Location** | AgentCore configuration | CodeCommit `/system/agent-system-prompt.md` |
 | **Content** | Safety constraints, output contract, role | Classification rules, templates, taxonomy |
 | **Mutability** | Rarely changed | Versioned, auditable, frequently tuned |
-| **Deployment** | CDK deploy | Git commit |
-
-**Agent Instructions (Static)** — configured on Bedrock Agent:
-```
-You are a Second Brain classifier agent. You MUST:
-1. Output ONLY valid Action Plan JSON
-2. Never execute side effects
-3. Never hallucinate file paths
-4. Always include confidence scores
-```
+| **Deployment** | AgentCore setup | Git commit |
 
 **System Prompt (Dynamic)** — loaded from CodeCommit at runtime:
 - Classification rules and signals
 - Confidence thresholds
 - Markdown templates
 - Taxonomy definitions
+
+**Runtime Guard:** If system prompt is missing, fall back to minimal safe prompt and emit error logs.
 
 ```typescript
 type Classification = 'inbox' | 'idea' | 'decision' | 'project' | 'task';

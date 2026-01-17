@@ -54,36 +54,42 @@
   - Configure PAY_PER_REQUEST billing
   - **Validates: Requirements 21, 24a**
 
-- [ ] 3.2 Create CodeCommit repository
+- [ ] 3.2 Create DynamoDB conversation context table
+  - Define table with `session_id` partition key (format: `{channel_id}#{user_id}`)
+  - Enable TTL on `expires_at` attribute (1 hour default)
+  - Configure PAY_PER_REQUEST billing
+  - **Validates: Requirements 9.1, 9.3**
+
+- [ ] 3.3 Create CodeCommit repository
   - Define repository with description
-  - Initialize with system prompt file path
   - **Validates: Requirements 11, 29, 40**
 
-- [ ] 3.3 Create Bedrock Agent for classification
-  - Define Bedrock Agent with Claude-class foundation model
-  - Configure Agent Instructions (static safety constraints, output contract)
-  - Parameterize model ID per environment
-  - Create agent alias for invocation
-  - **Validates: Requirements 6.3, 41**
+- [ ] 3.4 Create system prompt bootstrap custom resource
+  - CDK custom resource to seed initial system prompt if missing
+  - Create folder structure: `00-inbox/`, `10-ideas/`, `20-decisions/`, `30-projects/`, `90-receipts/`, `system/`
+  - Seed default `system/agent-system-prompt.md`
+  - **Validates: Requirements 29, 40**
 
-- [ ] 3.4 Create Worker Lambda function
+- [ ] 3.5 Create Worker Lambda function
   - Define Lambda function with Node.js 20 runtime
   - Configure SQS event source from Ingress queue
-  - Set timeout appropriate for Bedrock Agent calls (30s)
-  - Set environment variables: AGENT_ID, AGENT_ALIAS_ID, REPOSITORY_NAME
+  - Set timeout appropriate for AgentCore calls (30s)
+  - Set environment variables: REPOSITORY_NAME, IDEMPOTENCY_TABLE, CONVERSATION_TABLE
   - **Validates: Requirements 3, 28**
 
-- [ ] 3.5 Configure Worker Lambda permissions
+- [ ] 3.6 Configure Worker Lambda permissions
   - Grant DynamoDB read/write for idempotency table
+  - Grant DynamoDB read/write for conversation context table
   - Grant CodeCommit read/write for repository
   - Grant SES send email permission
-  - Grant Bedrock Agent invoke permission (`bedrock:InvokeAgent`)
+  - Grant Bedrock model invoke permission
   - Grant SSM read for bot-token and maildrop-email
   - **Validates: Requirements 23, 25**
 
-- [ ] 3.6 Create SES email identity
+- [ ] 3.7 Create SES email identity
   - Define email identity for sender address
   - Configure for OmniFocus Mail Drop sending
+  - Document: SES sandbox exit required for production
   - **Validates: Requirements 17, 28**
 
 ## Task 4: Slack Ingress Component
@@ -262,21 +268,27 @@
 
 ## Task 11: Classifier Component
 
-- [ ] 11.1 Implement Bedrock Agent Runtime integration
-  - Configure `@aws-sdk/client-bedrock-agent-runtime` client
-  - Use `InvokeAgentCommand` to invoke Bedrock Agent
+- [ ] 11.1 Implement AgentCore Runtime integration
+  - Create `AgentRuntimeClient` interface for testability
+  - Implement production client using Bedrock AgentCore
   - Construct prompt: system prompt (from CodeCommit) + user message
-  - Parse Action Plan JSON from streaming response
+  - Parse Action Plan JSON from response
   - **Validates: Requirements 6.3, 40.2**
 
-- [ ] 11.2 Implement confidence bouncer logic
+- [ ] 11.2 Implement AgentCore client mock for testing
+  - Create mock implementation of `AgentRuntimeClient`
+  - Use deterministic fixture responses
+  - No live AgentCore calls in unit tests
+  - **Validates: Testing strategy**
+
+- [ ] 11.3 Implement confidence bouncer logic
   - Implement `shouldAskClarification()` 
   - Low confidence (< 0.7) → always clarify
   - Medium confidence (0.7-0.85) → clarify or default to inbox
   - High confidence (≥ 0.85) → proceed
   - **Validates: Requirements 7, 8**
 
-- [ ] 11.3 Implement clarification prompt generation
+- [ ] 11.4 Implement clarification prompt generation
   - Implement `generateClarificationPrompt()`
   - Include detected classification options
   - Ask exactly one question
@@ -318,9 +330,10 @@
 ## Task 14: Conversation Context Component
 
 - [ ] 14.1 Implement DynamoDB conversation store
-  - Implement `get()` to retrieve context by channel+user
-  - Implement `set()` to store context with TTL
+  - Implement `get()` to retrieve context by session_id (`{channel_id}#{user_id}`)
+  - Implement `set()` to store context with TTL (1 hour)
   - Implement `delete()` to clear context
+  - Compute `expires_at` at write time
   - **Validates: Requirements 9.1, 9.3**
 
 - [ ] 14.2 Implement context-aware processing
@@ -590,32 +603,34 @@
   - Document deployment commands
   - **Validates: Requirement 28**
 
-## Task 25: AgentCore Memory Integration
+## Task 25: AgentCore Memory Integration (OPTIONAL - v2)
 
-- [ ] 25.1 Implement AgentCore Memory for preferences
+> **Note:** AgentCore Memory is optional for v1. These tasks are deferred unless personalization is required for correctness.
+
+- [ ]* 25.1 Implement AgentCore Memory for preferences
   - Store user preferences (confidence thresholds, taxonomy words)
   - Store stable operating assumptions
   - Use AgentCore Memory API for read/write
   - **Validates: Requirements 47.1, 47.2**
 
-- [ ] 25.2 Implement clarification state in AgentCore Memory
+- [ ]* 25.2 Implement clarification state in AgentCore Memory
   - Store short-lived clarification state
   - Implement TTL-like expiration behavior
   - Clear state after successful processing
   - **Validates: Requirement 47.3**
 
-- [ ] 25.3 Enforce memory strategy constraints
+- [ ]* 25.3 Enforce memory strategy constraints
   - Ensure no full notes stored in AgentCore Memory
   - Ensure no receipts stored in AgentCore Memory
   - Ensure no idempotency keys stored in AgentCore Memory
   - **Validates: Requirements 47.4, 47.5, 47.6**
 
-- [ ] 25.4 Write Property 30 test: Git as Source of Truth
+- [ ]* 25.4 Write Property 30 test: Git as Source of Truth
   - Verify all durable artifacts stored in Git only
   - Verify Git is authoritative over AgentCore Memory
   - **Validates: Requirements 46.1-46.5**
 
-- [ ] 25.5 Write Property 31 test: AgentCore Memory Constraints
+- [ ]* 25.5 Write Property 31 test: AgentCore Memory Constraints
   - Verify only preferences and short-lived state in AgentCore Memory
   - Verify no full notes or receipts in AgentCore Memory
   - **Validates: Requirements 47.1-47.6**
