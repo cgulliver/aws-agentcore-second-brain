@@ -1,0 +1,6 @@
+# Second Brain Classifier Agent Dependencies
+# For AgentCore Runtime container
+
+strands-agents>=0.1.0
+bedrock-agentcore>=0.1.0
+boto3>=1.34.0
