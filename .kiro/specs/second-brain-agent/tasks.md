@@ -116,7 +116,14 @@
   - Define email identity for sender address
   - Configure for OmniFocus Mail Drop sending
   - Document: SES sandbox exit required for production
-  - **Validates: Requirements 17, 28**
+  - Support log-only/no-op email mode for non-production via configuration
+  - **Validates: Requirements 17, 28, 52**
+
+- [ ] 3.12 Add SSM parameter for conversation context TTL
+  - Create `/second-brain/conversation-ttl-seconds` parameter
+  - Default value: 3600 (1 hour)
+  - Document configurable TTL in deployment guide
+  - **Validates: Requirements 9.5, 9.6, 9.7**
 
 ## Task 4: Slack Ingress Component
 
@@ -163,15 +170,28 @@
   - Return false on ConditionalCheckFailedException
   - **Validates: Requirements 21.2, 21.3, 24a.4**
 
-- [ ] 5.2 Implement lock status updates
-  - Implement `markCompleted()` to update status
-  - Implement `markFailed()` to update status with error
-  - **Validates: Requirements 20, 22**
+- [ ] 5.2 Implement execution state tracking
+  - Implement `updateExecutionState()` with status enum: `RECEIVED`, `PLANNED`, `EXECUTING`, `PARTIAL_FAILURE`, `SUCCEEDED`, `FAILED_PERMANENT`
+  - Track per-step status: `codecommit_status`, `ses_status`, `slack_status`
+  - Include `last_error`, `updated_at`, optional `retry_after` fields
+  - **Validates: Requirements 44a.1-44a.5**
 
-- [ ] 5.3 Implement duplicate detection
+- [ ] 5.3 Implement lock status updates
+  - Implement `markCompleted()` to update status to `SUCCEEDED`
+  - Implement `markFailed()` to update status with error
+  - Implement `markPartialFailure()` to update status with completed steps
+  - **Validates: Requirements 20, 22, 44b.1**
+
+- [ ] 5.4 Implement duplicate detection
   - Implement `isProcessed()` to check if event_id exists
-  - Return true if record exists and status is 'completed'
+  - Return true if record exists and status is `SUCCEEDED`
   - **Validates: Requirements 19, 20, 22**
+
+- [ ] 5.5 Implement partial failure recovery
+  - Implement `getExecutionState()` to retrieve current state
+  - Implement `getCompletedSteps()` to identify which steps succeeded
+  - Support resuming execution at first failed step
+  - **Validates: Requirements 44b.2, 44b.3, 44c.1-44c.4**
 
 ## Task 6: Knowledge Store Component
 
@@ -244,11 +264,17 @@
   - Store hash in SystemPromptMetadata
   - **Validates: Requirements 45.1, 45.2**
 
-- [ ] 8.3 Implement prompt structure validation
+- [ ] 8.3 Implement prompt fallback behavior
+  - If system prompt cannot be loaded, fall back to minimal safe prompt
+  - Emit error-level logs when using fallback
+  - Emit CloudWatch metrics for prompt load failures
+  - **Validates: Requirements 40.5, 40.6**
+
+- [ ] 8.4 Implement prompt structure validation
   - Implement `validatePromptStructure()` 
   - Check for required sections (Role, Classification Rules, Output Contract)
-  - Fail worker startup if invalid
-  - **Validates: Requirements 40.4, 41**
+  - Log warnings for missing sections but continue with fallback
+  - **Validates: Requirements 41**
 
 ## Task 9: Action Plan Component
 
@@ -278,19 +304,38 @@
   - Execute OmniFocus email second
   - Execute Slack reply third
   - Stop on any failure
-  - **Validates: Requirements 44.1, 44.2**
+  - Update execution state after each step
+  - **Validates: Requirements 44.1, 44.2, 44a.3**
 
 - [ ] 10.2 Implement execution result tracking
-  - Track which steps succeeded
+  - Track which steps succeeded via execution state
   - Track which step failed (if any)
-  - Include in receipt
-  - **Validates: Requirements 44.3**
+  - Include per-step status in receipt
+  - **Validates: Requirements 44.3, 44a.2, 44a.3**
 
 - [ ] 10.3 Implement validation failure handling
   - On invalid Action Plan, skip all side effects
   - Send error reply to Slack
   - Create failure receipt with validation_errors
   - **Validates: Requirements 43.2, 43.3, 43.4**
+
+- [ ] 10.4 Implement rate limit handling for Slack API
+  - Detect 429 responses and honor `Retry-After` header
+  - Implement bounded exponential backoff
+  - Mark execution `PARTIAL_FAILURE` if retries exhausted
+  - **Validates: Requirements 50.1, 50.2, 50.3**
+
+- [ ] 10.5 Implement rate limit handling for SES
+  - Detect throttling and transient send failures
+  - Implement exponential backoff with configurable maximum
+  - Mark execution `PARTIAL_FAILURE` if retries exhausted after prior success
+  - **Validates: Requirements 50.4, 50.5**
+
+- [ ] 10.6 Implement partial failure recovery
+  - Check execution state for completed steps before execution
+  - Skip already-completed steps on retry
+  - Resume at first failed step
+  - **Validates: Requirements 44b.2, 44b.3, 44c.3**
 
 ## Task 11: AgentCore Classifier Agent (Python)
 
@@ -337,14 +382,20 @@
   - No live AgentCore calls in unit tests
   - **Validates: Testing strategy**
 
-- [ ] 12.3 Implement confidence bouncer logic
+- [ ] 12.3 Implement AgentCore rate limit handling
+  - Detect throttling and transient invocation errors
+  - Implement bounded exponential backoff for retries
+  - Mark execution `FAILED` if retries exhausted (no side effects)
+  - **Validates: Requirements 50.6, 50.7**
+
+- [ ] 12.4 Implement confidence bouncer logic
   - Implement `shouldAskClarification()` 
   - Low confidence (< 0.7) → always clarify
   - Medium confidence (0.7-0.85) → clarify or default to inbox
   - High confidence (≥ 0.85) → proceed
   - **Validates: Requirements 7, 8**
 
-- [ ] 12.4 Implement clarification prompt generation
+- [ ] 12.5 Implement clarification prompt generation
   - Implement `generateClarificationPrompt()`
   - Include detected classification options
   - Ask exactly one question
@@ -387,12 +438,18 @@
 
 - [ ] 15.1 Implement DynamoDB conversation store
   - Implement `get()` to retrieve context by session_id (`{channel_id}#{user_id}`)
-  - Implement `set()` to store context with TTL (1 hour)
+  - Implement `set()` to store context with configurable TTL
   - Implement `delete()` to clear context
-  - Compute `expires_at` at write time
-  - **Validates: Requirements 9.1, 9.3**
+  - Compute `expires_at` at write time using TTL from SSM
+  - **Validates: Requirements 9.1, 9.3, 9.4**
 
-- [ ] 15.2 Implement context-aware processing
+- [ ] 15.2 Implement configurable TTL loading
+  - Load TTL from SSM Parameter Store (`/second-brain/conversation-ttl-seconds`)
+  - Default to 3600 seconds (1 hour) if parameter not set
+  - Cache TTL value for Lambda invocation lifetime
+  - **Validates: Requirements 9.5, 9.6, 9.7**
+
+- [ ] 15.3 Implement context-aware processing
   - Check for existing context on new message
   - Resume processing with original + reply context
   - Clear context after successful processing
@@ -539,6 +596,30 @@
   - Verify slugs are lowercase, hyphenated, 3-8 words, ASCII only
   - **Validates: Requirements 30**
 
+- [ ] 19.11 Write Property 28a test: Execution State Tracking
+  - Generate execution sequences with various outcomes
+  - Verify state transitions are valid (RECEIVED → PLANNED → EXECUTING → terminal state)
+  - Verify per-step status is tracked correctly
+  - **Validates: Requirements 44a.1-44a.5**
+
+- [ ] 19.12 Write Property 28b test: Partial Failure Recovery
+  - Generate partial failure scenarios
+  - Verify completed steps are not re-executed on retry
+  - Verify execution resumes at first failed step
+  - **Validates: Requirements 44b.1-44b.3, 44c.1-44c.4**
+
+- [ ] 19.13 Write Property 28c test: Rate Limit Handling
+  - Generate rate limit scenarios for Slack, SES, AgentCore
+  - Verify retry behavior with backoff
+  - Verify correct terminal state based on retry exhaustion
+  - **Validates: Requirements 50.1-50.7**
+
+- [ ] 19.14 Write Property 10 test: Conversation Context TTL
+  - Generate context records with various TTL values
+  - Verify TTL is configurable and not hardcoded
+  - Verify default TTL is 3600 seconds
+  - **Validates: Requirements 9.4-9.7**
+
 ## Task 20: Unit Tests
 
 - [ ] 20.1 Write Slack Ingress unit tests
@@ -552,7 +633,10 @@
   - Test lock acquisition success
   - Test duplicate detection
   - Test TTL calculation
-  - **Validates: Requirements 19-22, 24a**
+  - Test execution state transitions
+  - Test partial failure marking
+  - Test completed steps tracking
+  - **Validates: Requirements 19-22, 24a, 44a, 44b**
 
 - [ ] 20.3 Write Knowledge Store unit tests
   - Test file path generation for each classification
@@ -578,6 +662,25 @@
   - Test decision note format
   - Test project page format
   - **Validates: Requirements 31-35**
+
+- [ ] 20.7 Write Rate Limit Handling unit tests
+  - Test Slack 429 response handling with Retry-After
+  - Test SES throttling with exponential backoff
+  - Test AgentCore throttling with bounded backoff
+  - Test retry exhaustion marking correct terminal state
+  - **Validates: Requirements 50.1-50.7**
+
+- [ ] 20.8 Write Conversation Context TTL unit tests
+  - Test TTL loading from SSM
+  - Test default TTL when parameter not set
+  - Test TTL caching behavior
+  - **Validates: Requirements 9.5-9.7**
+
+- [ ] 20.9 Write System Prompt Fallback unit tests
+  - Test fallback to minimal safe prompt on load failure
+  - Test error-level logging on fallback
+  - Test metrics emission on fallback
+  - **Validates: Requirements 40.5, 40.6**
 
 ## Task 21: Integration Tests
 
@@ -609,6 +712,20 @@
   - Verify correction commit
   - Verify new receipt references prior
   - **Validates: Requirement 10**
+
+- [ ] 21.5 Write partial failure recovery flow test
+  - Simulate commit success followed by SES failure
+  - Verify execution marked `PARTIAL_FAILURE`
+  - Simulate retry
+  - Verify commit not re-executed
+  - Verify SES retry attempted
+  - **Validates: Requirements 44a, 44b, 44c**
+
+- [ ] 21.6 Write rate limit handling flow test
+  - Simulate Slack 429 response
+  - Verify Retry-After honored
+  - Verify retry with backoff
+  - **Validates: Requirements 50.1-50.3**
 
 ## Task 22: CDK Tests
 

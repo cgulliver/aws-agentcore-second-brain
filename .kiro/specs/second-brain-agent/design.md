@@ -1272,9 +1272,12 @@ The system uses two distinct memory layers with clear separation of concerns:
 *For any* clarification request:
 - The system SHALL store conversation context with the original message
 - When a reply is received within the timeout period, the system SHALL resume processing with both original and reply context
-- Context SHALL expire after the configured timeout (default 1 hour)
+- Context records SHALL include a TTL attribute
+- Context SHALL expire after the configured timeout (default 3600 seconds / 1 hour)
+- Context TTL SHALL be configurable via SSM Parameter Store
+- Context TTL SHALL NOT be hardcoded
 
-**Validates: Requirements 9.1, 9.2, 9.3**
+**Validates: Requirements 9.1, 9.2, 9.3, 9.4, 9.5, 9.6, 9.7**
 
 ### Property 11: Fix Command Parsing
 
@@ -1413,9 +1416,11 @@ The `generateFilePath` function SHALL produce paths matching these patterns exac
 *For any* worker invocation:
 - The system SHALL load the system prompt from `/system/agent-system-prompt.md` in CodeCommit
 - The system SHALL compute and cache the prompt's commit_id and SHA-256 hash
-- If the system prompt file is missing, the worker SHALL fail with a clear error
+- CDK SHALL bootstrap a placeholder system prompt if none is present at first deploy
+- If the system prompt cannot be loaded at runtime, the worker SHALL fall back to a minimal safe prompt
+- If the system prompt cannot be loaded at runtime, the worker SHALL emit error-level logs and metrics
 
-**Validates: Requirements 40.1, 40.2, 40.3**
+**Validates: Requirements 40.1, 40.2, 40.3, 40.4, 40.5, 40.6**
 
 ### Property 26: Action Plan Schema Validation
 
@@ -1445,6 +1450,35 @@ The `generateFilePath` function SHALL produce paths matching these patterns exac
 - The receipt SHALL record which steps succeeded and which failed
 
 **Validates: Requirements 44.1, 44.2, 44.3**
+
+### Property 28a: Execution State Tracking
+
+*For any* event being processed:
+- The system SHALL persist an execution record keyed by `event_id`
+- The execution record SHALL track status through: `RECEIVED` → `PLANNED` → `EXECUTING` → `SUCCEEDED` | `PARTIAL_FAILURE` | `FAILED_PERMANENT`
+- The execution record SHALL include per-step status for each side effect
+- The execution record SHALL include `last_error` and `updated_at` fields
+
+**Validates: Requirements 44a.1-44a.5**
+
+### Property 28b: Partial Failure Recovery
+
+*For any* execution in `PARTIAL_FAILURE` status:
+- On retry, successfully completed side effects SHALL NOT be re-executed
+- On retry, execution SHALL resume at the first failed step
+- The system SHALL NOT create duplicate side effects on retry
+
+**Validates: Requirements 44b.1-44b.3, 44c.1-44c.4**
+
+### Property 28c: Rate Limit Handling
+
+*For any* rate-limited API call (Slack 429, SES throttling, AgentCore throttling):
+- The system SHALL retry with bounded exponential backoff
+- For Slack 429, the system SHALL honor the `Retry-After` header
+- If retries are exhausted after successful prior steps, execution SHALL be marked `PARTIAL_FAILURE`
+- If AgentCore retries are exhausted, execution SHALL be marked `FAILED` with no side effects
+
+**Validates: Requirements 50.1-50.7**
 
 ### Property 29: Receipt Prompt Metadata
 
@@ -1519,9 +1553,9 @@ The `generateFilePath` function SHALL produce paths matching these patterns exac
 
 | Error Condition | Behavior | Recovery |
 |----------------|----------|----------|
-| System prompt file missing | Worker fails to start | Alert via CloudWatch, deployment should have caught this |
-| System prompt file empty | Worker fails to start | Alert via CloudWatch |
-| System prompt malformed | Worker fails to start | Alert via CloudWatch |
+| System prompt file missing | Fall back to minimal safe prompt | Emit error-level logs and metrics |
+| System prompt file empty | Fall back to minimal safe prompt | Emit error-level logs and metrics |
+| System prompt malformed | Fall back to minimal safe prompt | Emit error-level logs and metrics |
 | CodeCommit read failure | Retry up to 3 times | Fall back to cached version if available |
 
 ### Action Plan Validation Errors
@@ -1538,9 +1572,25 @@ The `generateFilePath` function SHALL produce paths matching these patterns exac
 
 | Error Condition | Behavior |
 |----------------|----------|
-| CodeCommit write fails | Stop execution, log error, reply to Slack, create partial receipt |
-| Email send fails (after commit) | Stop execution, log error, reply to Slack, create partial receipt |
-| Slack reply fails (after commit/email) | Log error, create receipt noting Slack failure |
+| CodeCommit write fails | Mark execution `PARTIAL_FAILURE`, stop execution, log error, reply to Slack |
+| Email send fails (after commit) | Mark execution `PARTIAL_FAILURE`, stop execution, log error, reply to Slack |
+| Slack reply fails (after commit/email) | Mark execution `PARTIAL_FAILURE`, log error, create receipt noting Slack failure |
+
+### Rate Limiting Errors
+
+| Error Condition | Behavior | Recovery |
+|----------------|----------|----------|
+| Slack API 429 | Honor `Retry-After` header, retry with backoff | Mark `PARTIAL_FAILURE` if retries exhausted |
+| SES throttling | Retry with exponential backoff | Mark `PARTIAL_FAILURE` if retries exhausted after prior success |
+| AgentCore throttling | Retry planning with bounded backoff | Mark `FAILED` if retries exhausted, no side effects |
+
+### Partial Failure Recovery
+
+| Execution Status | Retry Behavior |
+|-----------------|----------------|
+| `PARTIAL_FAILURE` | Resume at first failed step, skip completed steps |
+| `FAILED_PERMANENT` | No automatic retry, manual intervention required |
+| `SUCCEEDED` | No retry needed |
 
 ### DLQ Handling
 

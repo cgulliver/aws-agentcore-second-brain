@@ -17,7 +17,7 @@ The system prioritizes simplicity, trust, and long-term durability. Slack handle
 - **Idempotency_Guard**: The component that prevents duplicate side effects using event_id and DynamoDB conditional writes
 - **Johnny_Decimal**: A file organization system using numeric prefixes (00-99) for stable navigation
 - **Mail_Drop**: OmniFocus email-based task capture feature
-- **Event_Callback**: A Slack webhook payload containing a user message event
+- **Event_Callback**: A Slack webhook payload containing a user message event; DM events have `channel_type: "im"` at the event level
 - **Confidence_Threshold**: The minimum classification confidence required for autonomous action
 - **Lambda_Function_URL**: A public HTTPS endpoint for Lambda with application-layer authentication
 - **System_Prompt**: The committed Markdown file that defines agent behavior and classification rules
@@ -113,7 +113,11 @@ The system prioritizes simplicity, trust, and long-term durability. Slack handle
 
 1. WHEN clarification is required, THE System SHALL store the conversation context
 2. WHEN the user replies to a clarification question, THE System SHALL resume processing with the original message and clarification response
-3. THE System SHALL maintain conversation context for a reasonable timeout period (e.g., 1 hour)
+3. THE System SHALL maintain conversation context for a configurable timeout period
+4. THE conversation context records SHALL include a TTL attribute
+5. THE default conversation context TTL SHALL be 3600 seconds (1 hour)
+6. THE conversation context TTL SHALL be configurable via SSM Parameter Store
+7. THE conversation context TTL SHALL NOT be hardcoded
 
 ### Requirement 10: Fix Protocol
 
@@ -455,7 +459,9 @@ The system prioritizes simplicity, trust, and long-term durability. Slack handle
 1. THE System SHALL store the agent system prompt at `/system/agent-system-prompt.md` in the CodeCommit repository
 2. THE System SHALL load the system prompt from the committed file when invoking Bedrock AgentCore
 3. THE System SHALL NOT store system prompt content in SSM Parameter Store
-4. THE CDK deployment SHALL fail if the system prompt file is missing from the repository
+4. THE CDK deployment SHALL bootstrap a placeholder system prompt if none is present at first deploy
+5. IF the system prompt cannot be loaded at runtime, THEN THE worker SHALL fall back to a minimal safe prompt
+6. IF the system prompt cannot be loaded at runtime, THEN THE worker SHALL emit error-level logs and metrics
 
 ### Requirement 41: System Prompt Contents
 
@@ -503,6 +509,39 @@ The system prioritizes simplicity, trust, and long-term durability. Slack handle
 2. IF any side effect fails, THEN THE System SHALL NOT execute subsequent side effects
 3. THE Receipt_Logger SHALL record which side effects succeeded and which failed
 
+### Requirement 44a: Execution State Tracking
+
+**User Story:** As a system operator, I want execution state persisted, so that partial failures can be recovered.
+
+#### Acceptance Criteria
+
+1. THE worker SHALL persist an execution record keyed by `event_id`
+2. THE execution record SHALL include `status` with values: `RECEIVED`, `PLANNED`, `EXECUTING`, `PARTIAL_FAILURE`, `SUCCEEDED`, `FAILED_PERMANENT`
+3. THE execution record SHALL include per-step status (e.g., `codecommit_status`, `ses_status`, `slack_status`)
+4. THE execution record SHALL include `last_error` and `updated_at` fields
+5. THE execution record MAY include `retry_after` for retry scheduling
+
+### Requirement 44b: Partial Failure Handling
+
+**User Story:** As a system operator, I want partial failures to be recoverable, so that successful side effects are not repeated.
+
+#### Acceptance Criteria
+
+1. IF an execution fails after one or more side effects succeed, THEN THE execution record SHALL be marked `PARTIAL_FAILURE`
+2. WHEN retrying a `PARTIAL_FAILURE` execution, THE System SHALL NOT re-execute successfully completed side effects
+3. WHEN retrying a `PARTIAL_FAILURE` execution, THE System SHALL resume at the first failed step
+
+### Requirement 44c: Retry Semantics
+
+**User Story:** As a system operator, I want safe retries for partial failures, so that transient errors can be recovered.
+
+#### Acceptance Criteria
+
+1. THE System SHALL support safe retries for executions in `PARTIAL_FAILURE` status
+2. Retries MAY be automatic (queue-based) or user-initiated
+3. ON retry, execution SHALL resume at the first failed step
+4. THE System SHALL NOT create duplicate side effects on retry
+
 ### Requirement 45: Receipt Prompt Metadata
 
 **User Story:** As a system operator, I want receipts to include prompt version information, so that I can trace behavior to exact prompt versions.
@@ -537,3 +576,61 @@ The system prioritizes simplicity, trust, and long-term durability. Slack handle
 4. THE System SHALL NOT store full notes, decisions, or project documents in AgentCore Memory
 5. THE System SHALL NOT store receipts or idempotency keys in AgentCore Memory
 6. THE System SHALL NOT store anything that must be exactly reconstructable in AgentCore Memory
+
+### Requirement 48: Slack Retry Handling
+
+**User Story:** As a system operator, I want the system to handle Slack's retry behavior gracefully, so that duplicate deliveries do not cause duplicate side effects.
+
+#### Acceptance Criteria
+
+1. THE System SHALL assume Slack may retry delivery up to 3 times with exponential backoff
+2. THE System SHALL return HTTP 200 within 3 seconds to prevent unnecessary retries
+3. THE Idempotency_Guard SHALL ensure side effects are executed at most once regardless of retry count
+4. THE System SHALL NOT fail or produce errors when receiving retried events
+
+### Requirement 49: Slack OAuth Scopes
+
+**User Story:** As a system operator, I want the Slack app to request only the necessary OAuth scopes, so that the system follows least-privilege principles.
+
+#### Acceptance Criteria
+
+1. THE Slack app SHALL request the `im:history` scope to read DM history
+2. THE Slack app SHALL request the `im:read` scope to view DM metadata
+3. THE Slack app SHALL request the `chat:write` scope to send messages
+4. THE System SHALL NOT request scopes beyond what is required for v1 functionality
+5. IF additional interactions are introduced (buttons, modals, channel mentions), THEN scopes SHALL be revisited and expanded accordingly
+
+### Requirement 50: Rate Limiting and Throttling
+
+**User Story:** As a system operator, I want the system to handle rate limits gracefully, so that transient throttling does not cause permanent failures.
+
+#### Acceptance Criteria
+
+1. ON Slack API `429` responses, THE worker SHALL honor the `Retry-After` header
+2. ON Slack API throttling, THE worker SHALL retry with bounded exponential backoff
+3. IF Slack retry window is exceeded, THEN THE execution SHALL be marked `PARTIAL_FAILURE` or `FAILED` as appropriate
+4. ON SES throttling or transient send failures, THE worker SHALL retry with exponential backoff up to a configurable maximum
+5. IF SES retries are exhausted and prior steps succeeded, THEN THE execution SHALL be marked `PARTIAL_FAILURE`
+6. ON AgentCore Runtime throttling or transient invocation errors, THE worker SHALL retry planning with bounded exponential backoff
+7. IF AgentCore retries are exhausted, THEN THE execution SHALL be marked `FAILED` and no side effects SHALL be executed
+
+### Requirement 51: Concurrency and Backpressure
+
+**User Story:** As a system operator, I want concurrency limits configurable, so that the system can be tuned for load.
+
+#### Acceptance Criteria
+
+1. Concurrency limits SHALL be configurable (e.g., Lambda reserved concurrency, SQS settings)
+2. THE System SHALL prefer queueing over rejecting Slack events
+3. THE System SHALL NOT drop events due to temporary capacity constraints
+
+### Requirement 52: SES Production Prerequisites
+
+**User Story:** As a system operator, I want clear SES production requirements documented, so that deployment is successful.
+
+#### Acceptance Criteria
+
+1. Deployment documentation SHALL explicitly state SES production prerequisites
+2. THE documentation SHALL specify verified sending identity requirements (domain or address)
+3. THE documentation SHALL specify sandbox exit requirements if applicable
+4. Non-production environments SHALL support a log-only or no-op email mode via configuration
