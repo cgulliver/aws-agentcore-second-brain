@@ -48,41 +48,41 @@
 
 ## Task 3: Core Stack Infrastructure
 
-- [ ] 3.1 Create DynamoDB idempotency table
+- [x] 3.1 Create DynamoDB idempotency table
   - Define table with `event_id` partition key
   - Enable TTL on `expires_at` attribute
   - Configure PAY_PER_REQUEST billing
   - **Validates: Requirements 21, 24a**
 
-- [ ] 3.2 Create DynamoDB conversation context table
+- [x] 3.2 Create DynamoDB conversation context table
   - Define table with `session_id` partition key (format: `{channel_id}#{user_id}`)
   - Enable TTL on `expires_at` attribute (1 hour default)
   - Configure PAY_PER_REQUEST billing
   - **Validates: Requirements 9.1, 9.3**
 
-- [ ] 3.3 Create CodeCommit repository
+- [x] 3.3 Create CodeCommit repository
   - Define repository with description
   - **Validates: Requirements 11, 29, 40**
 
-- [ ] 3.4 Create system prompt bootstrap custom resource
+- [x] 3.4 Create system prompt bootstrap custom resource
   - CDK custom resource to seed initial system prompt if missing
   - Create folder structure: `00-inbox/`, `10-ideas/`, `20-decisions/`, `30-projects/`, `90-receipts/`, `system/`
   - Seed default `system/agent-system-prompt.md`
   - **Validates: Requirements 29, 40**
 
-- [ ] 3.5 Create ECR repository for AgentCore classifier container
+- [x] 3.5 Create ECR repository for AgentCore classifier container
   - Define ECR repository for classifier agent image
   - Configure image tag mutability and lifecycle policies
   - **Validates: Requirements 6.3, 28**
 
-- [ ] 3.6 Create CodeBuild project for classifier container
+- [x] 3.6 Create CodeBuild project for classifier container
   - Define CodeBuild project with ARM64 Linux environment
   - Configure buildspec for Docker build and ECR push
   - Create S3 asset for agent source code (`agent/` directory)
   - Grant ECR push permissions to CodeBuild role
   - **Validates: Requirements 6.3, 28**
 
-- [ ] 3.7 Create AgentCore Runtime resource
+- [x] 3.7 Create AgentCore Runtime resource
   - Define `CfnRuntime` pointing to ECR container image
   - Configure network mode (PUBLIC)
   - Set protocol configuration (HTTP)
@@ -90,20 +90,20 @@
   - Pass environment variables: KNOWLEDGE_REPO_NAME
   - **Validates: Requirements 6.3, 28**
 
-- [ ] 3.8 Create build trigger custom resource
+- [x] 3.8 Create build trigger custom resource
   - Lambda function to trigger CodeBuild and wait for completion
   - Custom resource to invoke on first deploy
   - Ensure AgentCore Runtime depends on successful build
   - **Validates: Requirements 6.3, 28**
 
-- [ ] 3.9 Create Worker Lambda function
+- [x] 3.9 Create Worker Lambda function
   - Define Lambda function with Node.js 20 runtime
   - Configure SQS event source from Ingress queue
   - Set timeout appropriate for AgentCore calls (60s)
   - Set environment variables: REPOSITORY_NAME, IDEMPOTENCY_TABLE, CONVERSATION_TABLE, AGENT_RUNTIME_ARN
   - **Validates: Requirements 3, 28**
 
-- [ ] 3.10 Configure Worker Lambda permissions
+- [x] 3.10 Configure Worker Lambda permissions
   - Grant DynamoDB read/write for idempotency table
   - Grant DynamoDB read/write for conversation context table
   - Grant CodeCommit read/write for repository
@@ -112,14 +112,14 @@
   - Grant SSM read for bot-token and maildrop-email
   - **Validates: Requirements 23, 25**
 
-- [ ] 3.11 Create SES email identity
+- [x] 3.11 Create SES email identity
   - Define email identity for sender address
   - Configure for OmniFocus Mail Drop sending
   - Document: SES sandbox exit required for production
   - Support log-only/no-op email mode for non-production via configuration
   - **Validates: Requirements 17, 28, 52**
 
-- [ ] 3.12 Add SSM parameter for conversation context TTL
+- [x] 3.12 Add SSM parameter for conversation context TTL
   - Create `/second-brain/conversation-ttl-seconds` parameter
   - Default value: 3600 (1 hour)
   - Document configurable TTL in deployment guide
