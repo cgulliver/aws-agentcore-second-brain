@@ -643,6 +643,76 @@ Or reply \`reclassify: <type>\` to specify directly.`;
 
 The Worker Lambda invokes AgentCore Runtime to get an Action Plan, then executes all side effects itself.
 
+> **Architecture:** AgentCore Runtime is a **containerized Python agent service** deployed via `CfnRuntime`. Lambda invokes it via `boto3.client('bedrock-agentcore').invoke_agent_runtime()`.
+
+#### boto3 Invocation Pattern
+
+```typescript
+import { BedrockAgentCoreClient, InvokeAgentRuntimeCommand } from '@aws-sdk/client-bedrock-agentcore';
+
+const agentcoreClient = new BedrockAgentCoreClient({});
+
+/**
+ * Invoke AgentCore Runtime to classify a message.
+ * 
+ * The AgentCore Runtime is a containerized Python agent that:
+ * - Receives the prompt via payload
+ * - Uses Strands Agents for reasoning
+ * - Returns Action Plan JSON
+ * 
+ * Lambda handles all side effects (CodeCommit, SES, Slack).
+ */
+export async function invokeAgentRuntime(
+  agentRuntimeArn: string,
+  prompt: string
+): Promise<string> {
+  const command = new InvokeAgentRuntimeCommand({
+    agentRuntimeArn,
+    qualifier: 'DEFAULT',
+    payload: JSON.stringify({ prompt }),
+  });
+
+  const response = await agentcoreClient.send(command);
+  
+  // Response is a streaming text/event-stream
+  // Parse the final result from the stream
+  const decoder = new TextDecoder();
+  let result = '';
+  
+  if (response.body) {
+    for await (const chunk of response.body) {
+      result += decoder.decode(chunk, { stream: true });
+    }
+  }
+  
+  return result;
+}
+```
+
+#### Python Equivalent (for reference)
+
+```python
+import boto3
+import json
+
+agentcore = boto3.client('bedrock-agentcore')
+
+def invoke_agent_runtime(agent_runtime_arn: str, prompt: str) -> dict:
+    """Invoke AgentCore Runtime to classify a message."""
+    response = agentcore.invoke_agent_runtime(
+        agentRuntimeArn=agent_runtime_arn,
+        qualifier="DEFAULT",
+        payload=json.dumps({"prompt": prompt})
+    )
+    
+    # Parse streaming response
+    result = ""
+    for event in response["body"]:
+        result += event["chunk"]["bytes"].decode("utf-8")
+    
+    return json.loads(result)
+```
+
 #### AgentRuntimeClient Interface (for testability)
 
 ```typescript
@@ -654,15 +724,19 @@ export interface AgentRuntimeClient {
 }
 
 /**
- * Production implementation using Bedrock AgentCore.
+ * Production implementation using Bedrock AgentCore Runtime.
  */
 export class BedrockAgentCoreClient implements AgentRuntimeClient {
-  // AgentCore-specific implementation
-  // SDK and invocation details depend on AgentCore API
+  private agentRuntimeArn: string;
+
+  constructor(agentRuntimeArn: string) {
+    this.agentRuntimeArn = agentRuntimeArn;
+  }
+
   async invoke(prompt: string, sessionId: string): Promise<string> {
-    // TODO: Implement AgentCore invocation
-    // This will use the AgentCore SDK/API when available
-    throw new Error('AgentCore implementation pending');
+    // Session ID is embedded in the prompt for AgentCore Runtime
+    // (AgentCore Runtime doesn't have native session management like Bedrock Agents)
+    return invokeAgentRuntime(this.agentRuntimeArn, prompt);
   }
 }
 
@@ -884,6 +958,248 @@ new cdk.CustomResource(this, 'RepositoryBootstrap', {
 });
 
 // Grant bootstrap handler CodeCommit write access
+repository.grantPullPush(bootstrapProvider.onEventHandler);
+```
+
+### AgentCore Runtime (Containerized Agent)
+
+The AgentCore Runtime is a containerized Python agent deployed via `CfnRuntime`. This requires:
+1. ECR repository for the container image
+2. CodeBuild project to build the ARM64 image
+3. Build trigger custom resource
+4. CfnRuntime pointing to the container
+
+```typescript
+import * as ecr from 'aws-cdk-lib/aws-ecr';
+import * as codebuild from 'aws-cdk-lib/aws-codebuild';
+import * as s3_assets from 'aws-cdk-lib/aws-s3-assets';
+import * as bedrockagentcore from 'aws-cdk-lib/aws-bedrockagentcore';
+
+// ECR Repository for classifier container
+const classifierRepo = new ecr.Repository(this, 'ClassifierRepository', {
+  repositoryName: 'second-brain-classifier',
+  imageScanOnPush: true,
+  imageTagMutability: ecr.TagMutability.MUTABLE,
+  removalPolicy: cdk.RemovalPolicy.DESTROY,
+  emptyOnDelete: true,
+  lifecycleRules: [
+    {
+      maxImageCount: 5,
+      description: 'Keep only 5 images',
+    },
+  ],
+});
+
+// S3 Asset for agent source code
+const agentSourceAsset = new s3_assets.Asset(this, 'AgentSourceAsset', {
+  path: './agent', // Directory containing classifier.py, Dockerfile, requirements.txt
+});
+
+// CodeBuild Role
+const codebuildRole = new iam.Role(this, 'CodeBuildRole', {
+  assumedBy: new iam.ServicePrincipal('codebuild.amazonaws.com'),
+  inlinePolicies: {
+    CodeBuildPolicy: new iam.PolicyDocument({
+      statements: [
+        new iam.PolicyStatement({
+          actions: [
+            'logs:CreateLogGroup',
+            'logs:CreateLogStream',
+            'logs:PutLogEvents',
+          ],
+          resources: [`arn:aws:logs:${this.region}:${this.account}:log-group:/aws/codebuild/*`],
+        }),
+        new iam.PolicyStatement({
+          actions: [
+            'ecr:BatchCheckLayerAvailability',
+            'ecr:GetDownloadUrlForLayer',
+            'ecr:BatchGetImage',
+            'ecr:GetAuthorizationToken',
+            'ecr:PutImage',
+            'ecr:InitiateLayerUpload',
+            'ecr:UploadLayerPart',
+            'ecr:CompleteLayerUpload',
+          ],
+          resources: [classifierRepo.repositoryArn, '*'],
+        }),
+        new iam.PolicyStatement({
+          actions: ['s3:GetObject'],
+          resources: [`${agentSourceAsset.bucket.bucketArn}/*`],
+        }),
+      ],
+    }),
+  },
+});
+
+// CodeBuild Project for ARM64 container
+const buildProject = new codebuild.Project(this, 'ClassifierBuildProject', {
+  projectName: 'second-brain-classifier-build',
+  description: 'Build classifier agent Docker image (ARM64)',
+  role: codebuildRole,
+  environment: {
+    buildImage: codebuild.LinuxArmBuildImage.AMAZON_LINUX_2_STANDARD_3_0,
+    computeType: codebuild.ComputeType.LARGE,
+    privileged: true, // Required for Docker builds
+  },
+  source: codebuild.Source.s3({
+    bucket: agentSourceAsset.bucket,
+    path: agentSourceAsset.s3ObjectKey,
+  }),
+  buildSpec: codebuild.BuildSpec.fromObject({
+    version: '0.2',
+    phases: {
+      pre_build: {
+        commands: [
+          'echo Logging in to Amazon ECR...',
+          'aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com',
+        ],
+      },
+      build: {
+        commands: [
+          'echo Build started on `date`',
+          'echo Building the Docker image for ARM64...',
+          'docker build -t $IMAGE_REPO_NAME:$IMAGE_TAG .',
+          'docker tag $IMAGE_REPO_NAME:$IMAGE_TAG $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG',
+        ],
+      },
+      post_build: {
+        commands: [
+          'echo Build completed on `date`',
+          'echo Pushing the Docker image...',
+          'docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG',
+          'echo ARM64 Docker image pushed successfully',
+        ],
+      },
+    },
+  }),
+  environmentVariables: {
+    AWS_DEFAULT_REGION: { value: this.region },
+    AWS_ACCOUNT_ID: { value: this.account },
+    IMAGE_REPO_NAME: { value: classifierRepo.repositoryName },
+    IMAGE_TAG: { value: 'latest' },
+  },
+});
+
+// Build Trigger Lambda
+const buildTriggerFunction = new lambda.Function(this, 'BuildTriggerFunction', {
+  runtime: lambda.Runtime.PYTHON_3_9,
+  handler: 'index.handler',
+  timeout: cdk.Duration.minutes(15),
+  code: lambda.Code.fromInline(`
+import boto3
+import cfnresponse
+import time
+
+def handler(event, context):
+    if event['RequestType'] == 'Delete':
+        cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+        return
+    
+    codebuild = boto3.client('codebuild')
+    project_name = event['ResourceProperties']['ProjectName']
+    
+    try:
+        # Start build
+        response = codebuild.start_build(projectName=project_name)
+        build_id = response['build']['id']
+        
+        # Wait for build to complete (up to 10 minutes)
+        for _ in range(60):
+            time.sleep(10)
+            build = codebuild.batch_get_builds(ids=[build_id])['builds'][0]
+            status = build['buildStatus']
+            
+            if status == 'SUCCEEDED':
+                cfnresponse.send(event, context, cfnresponse.SUCCESS, {'BuildId': build_id})
+                return
+            elif status in ['FAILED', 'FAULT', 'STOPPED', 'TIMED_OUT']:
+                cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': f'Build {status}'})
+                return
+        
+        cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': 'Build timeout'})
+    except Exception as e:
+        cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': str(e)})
+  `),
+  initialPolicy: [
+    new iam.PolicyStatement({
+      actions: ['codebuild:StartBuild', 'codebuild:BatchGetBuilds'],
+      resources: [buildProject.projectArn],
+    }),
+  ],
+});
+
+// Build Trigger Custom Resource
+const triggerBuild = new cdk.CustomResource(this, 'TriggerImageBuild', {
+  serviceToken: buildTriggerFunction.functionArn,
+  properties: {
+    ProjectName: buildProject.projectName,
+    // Change this to trigger rebuild
+    Version: '1.0.0',
+  },
+});
+
+// AgentCore Execution Role
+const agentCoreRole = new iam.Role(this, 'AgentCoreRole', {
+  assumedBy: new iam.ServicePrincipal('bedrock-agentcore.amazonaws.com'),
+  inlinePolicies: {
+    AgentCorePolicy: new iam.PolicyDocument({
+      statements: [
+        new iam.PolicyStatement({
+          actions: [
+            'bedrock:InvokeModel',
+            'bedrock:InvokeModelWithResponseStream',
+          ],
+          resources: ['*'],
+        }),
+        new iam.PolicyStatement({
+          actions: [
+            'logs:CreateLogGroup',
+            'logs:CreateLogStream',
+            'logs:PutLogEvents',
+          ],
+          resources: ['*'],
+        }),
+      ],
+    }),
+  },
+});
+
+// AgentCore Runtime (CfnRuntime)
+const agentRuntime = new bedrockagentcore.CfnRuntime(this, 'ClassifierRuntime', {
+  agentRuntimeName: 'second_brain_classifier',
+  agentRuntimeArtifact: {
+    containerConfiguration: {
+      containerUri: `${classifierRepo.repositoryUri}:latest`,
+    },
+  },
+  networkConfiguration: {
+    networkMode: 'PUBLIC',
+  },
+  protocolConfiguration: 'HTTP',
+  roleArn: agentCoreRole.roleArn,
+  description: 'Second Brain classifier agent runtime',
+  environmentVariables: {
+    KNOWLEDGE_REPO_NAME: repository.repositoryName,
+  },
+});
+
+// Ensure runtime depends on successful build
+agentRuntime.node.addDependency(triggerBuild);
+
+// Output the Agent Runtime ARN
+new cdk.CfnOutput(this, 'AgentRuntimeArn', {
+  value: agentRuntime.attrAgentRuntimeArn,
+  description: 'ARN of the AgentCore Runtime',
+});
+
+// Grant Worker Lambda permission to invoke AgentCore Runtime
+workerLambda.addToRolePolicy(new iam.PolicyStatement({
+  actions: ['bedrock-agentcore:InvokeAgentRuntime'],
+  resources: [agentRuntime.attrAgentRuntimeArn],
+}));
+
+// Pass Agent Runtime ARN to Worker Lambda
+workerLambda.addEnvironment('AGENT_RUNTIME_ARN', agentRuntime.attrAgentRuntimeArn);
 repository.grantPullPush(bootstrapProvider.onEventHandler);
 ```
 

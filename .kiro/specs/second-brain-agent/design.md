@@ -214,6 +214,67 @@ Responsibilities:
 - Hold any credentials
 - Perform any side effects
 
+### AgentCore Runtime Architecture (Containerized)
+
+The AgentCore Runtime is a **containerized Python agent service** deployed via `CfnRuntime`. It is NOT a direct SDK call from Lambda.
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    AgentCore Runtime Deployment                              │
+│                                                                             │
+│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐  │
+│  │   agent/    │───▶│  CodeBuild  │───▶│    ECR      │───▶│  CfnRuntime │  │
+│  │ Python code │    │ (ARM64 img) │    │ (container) │    │ (AgentCore) │  │
+│  └─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘  │
+│                                                                             │
+│  Lambda invokes AgentCore Runtime via boto3:                               │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │  agentcore = boto3.client('bedrock-agentcore')                      │   │
+│  │  response = agentcore.invoke_agent_runtime(                         │   │
+│  │      agentRuntimeArn=AGENT_RUNTIME_ARN,                             │   │
+│  │      qualifier="DEFAULT",                                           │   │
+│  │      payload=json.dumps({                                           │   │
+│  │          "prompt": f"{system_prompt}\n\n{user_message}"             │   │
+│  │      })                                                             │   │
+│  │  )                                                                  │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Container Components:**
+- `agent/classifier.py` — Python agent using `BedrockAgentCoreApp` + Strands Agents
+- `agent/Dockerfile` — ARM64 container image
+- `agent/requirements.txt` — Dependencies: `strands-agents`, `bedrock-agentcore`
+
+**CDK Resources:**
+- `CfnRuntime` — AgentCore Runtime pointing to ECR container
+- ECR Repository — Stores classifier container image
+- CodeBuild Project — Builds ARM64 Docker image
+- Build Trigger Custom Resource — Triggers build on first deploy
+
+**Agent Entry Point Pattern:**
+```python
+from strands import Agent
+from bedrock_agentcore.runtime import BedrockAgentCoreApp
+
+app = BedrockAgentCoreApp()
+
+@app.entrypoint
+async def invoke(payload=None):
+    prompt = payload.get("prompt", "")
+    agent = Agent(system_prompt="")  # System prompt passed in payload
+    response = agent(prompt)
+    return {
+        "classification": ...,
+        "confidence": ...,
+        "file_operations": [...],
+        ...
+    }
+
+if __name__ == "__main__":
+    app.run()
+```
+
 ### Idempotency Strategy
 
 The system uses DynamoDB for exactly-once side effect guarantees:

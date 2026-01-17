@@ -87,6 +87,7 @@ agent_runtime = bedrockagentcore.CfnRuntime(self, "AgentRuntime",
 
 ## Notes
 
-- Our Second Brain Agent uses **Lambda + AgentCore** pattern (not containerized runtime)
+- Our Second Brain Agent uses **containerized AgentCore Runtime** pattern
+- Lambda invokes AgentCore via `boto3.client('bedrock-agentcore').invoke_agent_runtime()`
 - AgentCore Memory is optional for v1 (DynamoDB handles conversation context)
-- These samples show the full AgentCore patterns for future reference
+- These samples show the full AgentCore patterns used in our implementation

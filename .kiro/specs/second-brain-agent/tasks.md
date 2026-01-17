@@ -70,23 +70,49 @@
   - Seed default `system/agent-system-prompt.md`
   - **Validates: Requirements 29, 40**
 
-- [ ] 3.5 Create Worker Lambda function
+- [ ] 3.5 Create ECR repository for AgentCore classifier container
+  - Define ECR repository for classifier agent image
+  - Configure image tag mutability and lifecycle policies
+  - **Validates: Requirements 6.3, 28**
+
+- [ ] 3.6 Create CodeBuild project for classifier container
+  - Define CodeBuild project with ARM64 Linux environment
+  - Configure buildspec for Docker build and ECR push
+  - Create S3 asset for agent source code (`agent/` directory)
+  - Grant ECR push permissions to CodeBuild role
+  - **Validates: Requirements 6.3, 28**
+
+- [ ] 3.7 Create AgentCore Runtime resource
+  - Define `CfnRuntime` pointing to ECR container image
+  - Configure network mode (PUBLIC)
+  - Set protocol configuration (HTTP)
+  - Create IAM role for AgentCore execution
+  - Pass environment variables: KNOWLEDGE_REPO_NAME
+  - **Validates: Requirements 6.3, 28**
+
+- [ ] 3.8 Create build trigger custom resource
+  - Lambda function to trigger CodeBuild and wait for completion
+  - Custom resource to invoke on first deploy
+  - Ensure AgentCore Runtime depends on successful build
+  - **Validates: Requirements 6.3, 28**
+
+- [ ] 3.9 Create Worker Lambda function
   - Define Lambda function with Node.js 20 runtime
   - Configure SQS event source from Ingress queue
-  - Set timeout appropriate for AgentCore calls (30s)
-  - Set environment variables: REPOSITORY_NAME, IDEMPOTENCY_TABLE, CONVERSATION_TABLE
+  - Set timeout appropriate for AgentCore calls (60s)
+  - Set environment variables: REPOSITORY_NAME, IDEMPOTENCY_TABLE, CONVERSATION_TABLE, AGENT_RUNTIME_ARN
   - **Validates: Requirements 3, 28**
 
-- [ ] 3.6 Configure Worker Lambda permissions
+- [ ] 3.10 Configure Worker Lambda permissions
   - Grant DynamoDB read/write for idempotency table
   - Grant DynamoDB read/write for conversation context table
   - Grant CodeCommit read/write for repository
   - Grant SES send email permission
-  - Grant Bedrock model invoke permission
+  - Grant `bedrock-agentcore:InvokeAgentRuntime` permission for AgentCore Runtime
   - Grant SSM read for bot-token and maildrop-email
   - **Validates: Requirements 23, 25**
 
-- [ ] 3.7 Create SES email identity
+- [ ] 3.11 Create SES email identity
   - Define email identity for sender address
   - Configure for OmniFocus Mail Drop sending
   - Document: SES sandbox exit required for production
@@ -266,126 +292,156 @@
   - Create failure receipt with validation_errors
   - **Validates: Requirements 43.2, 43.3, 43.4**
 
-## Task 11: Classifier Component
+## Task 11: AgentCore Classifier Agent (Python)
 
-- [ ] 11.1 Implement AgentCore Runtime integration
-  - Create `AgentRuntimeClient` interface for testability
-  - Implement production client using Bedrock AgentCore
-  - Construct prompt: system prompt (from CodeCommit) + user message
-  - Parse Action Plan JSON from response
-  - **Validates: Requirements 6.3, 40.2**
+> **Note:** The classifier runs as a containerized AgentCore Runtime. It receives prompts via `invoke_agent_runtime()` and returns Action Plan JSON. Lambda handles all side effects.
 
-- [ ] 11.2 Implement AgentCore client mock for testing
-  - Create mock implementation of `AgentRuntimeClient`
-  - Use deterministic fixture responses
+- [ ] 11.1 Create classifier agent Python project structure
+  - Create `agent/` directory with `classifier.py`, `requirements.txt`, `Dockerfile`
+  - Configure for ARM64 architecture (Graviton)
+  - Install dependencies: `strands-agents`, `bedrock-agentcore`
+  - **Validates: Requirements 6.3**
+
+- [ ] 11.2 Implement classifier agent entry point
+  - Create `BedrockAgentCoreApp` with `@app.entrypoint` decorator
+  - Parse incoming payload for `prompt` and `session_id`
+  - Create Strands `Agent` with system prompt
+  - Return Action Plan JSON response
+  - **Validates: Requirements 6.3, 42.1**
+
+- [ ] 11.3 Implement Action Plan generation prompt
+  - Construct prompt: system prompt (passed in payload) + user message
+  - Instruct agent to output valid Action Plan JSON
+  - Include classification rules, confidence scoring, output contract
+  - **Validates: Requirements 6.1, 6.2, 41, 42**
+
+- [ ] 11.4 Create Dockerfile for classifier agent
+  - Use Python 3.11 slim base image
+  - Install dependencies from requirements.txt
+  - Set entrypoint to run classifier.py
+  - Configure for ARM64 architecture
+  - **Validates: Requirements 6.3, 28**
+
+## Task 12: AgentCore Invocation from Lambda
+
+- [ ] 12.1 Implement AgentCore Runtime client
+  - Create `invokeAgentRuntime()` using boto3 `bedrock-agentcore` client
+  - Pass `agentRuntimeArn`, `qualifier`, and `payload`
+  - Handle streaming response (text/event-stream)
+  - Parse and return Action Plan JSON
+  - **Validates: Requirements 6.3**
+
+- [ ] 12.2 Implement AgentCore client mock for testing
+  - Create mock implementation that returns fixture Action Plans
+  - Use deterministic responses based on input patterns
   - No live AgentCore calls in unit tests
   - **Validates: Testing strategy**
 
-- [ ] 11.3 Implement confidence bouncer logic
+- [ ] 12.3 Implement confidence bouncer logic
   - Implement `shouldAskClarification()` 
   - Low confidence (< 0.7) → always clarify
   - Medium confidence (0.7-0.85) → clarify or default to inbox
   - High confidence (≥ 0.85) → proceed
   - **Validates: Requirements 7, 8**
 
-- [ ] 11.4 Implement clarification prompt generation
+- [ ] 12.4 Implement clarification prompt generation
   - Implement `generateClarificationPrompt()`
   - Include detected classification options
   - Ask exactly one question
   - **Validates: Requirements 7.3, 38.1, 38.2**
 
-## Task 12: Task Router Component
+## Task 13: Task Router Component
 
-- [ ] 12.1 Implement task email formatting
+- [ ] 13.1 Implement task email formatting
   - Implement `formatTaskEmail()` 
   - Subject = task title (imperative voice)
   - Body = context + Slack source reference
   - **Validates: Requirements 18, 39**
 
-- [ ] 12.2 Implement SES email sending
+- [ ] 13.2 Implement SES email sending
   - Implement `sendTaskEmail()` using SES SDK
   - Load OmniFocus Mail Drop address from SSM
   - Return message ID on success
   - **Validates: Requirements 17.1, 17.2**
 
-## Task 13: Slack Responder Component
+## Task 14: Slack Responder Component
 
-- [ ] 13.1 Implement confirmation reply formatting
+- [ ] 14.1 Implement confirmation reply formatting
   - Implement `formatConfirmationReply()`
   - Include classification, files changed, commit id
   - Include "reply fix: …" instruction
   - **Validates: Requirements 37.1, 37.2**
 
-- [ ] 13.2 Implement clarification reply formatting
+- [ ] 14.2 Implement clarification reply formatting
   - Implement `formatClarificationReply()`
   - Include question and valid options
   - **Validates: Requirements 38.1, 38.2, 38.3**
 
-- [ ] 13.3 Implement Slack Web API integration
+- [ ] 14.3 Implement Slack Web API integration
   - Implement `sendSlackReply()` using chat.postMessage
   - Load bot token from SSM
   - Handle API errors
   - **Validates: Requirements 37, 38**
 
-## Task 14: Conversation Context Component
+## Task 15: Conversation Context Component
 
-- [ ] 14.1 Implement DynamoDB conversation store
+- [ ] 15.1 Implement DynamoDB conversation store
   - Implement `get()` to retrieve context by session_id (`{channel_id}#{user_id}`)
   - Implement `set()` to store context with TTL (1 hour)
   - Implement `delete()` to clear context
   - Compute `expires_at` at write time
   - **Validates: Requirements 9.1, 9.3**
 
-- [ ] 14.2 Implement context-aware processing
+- [ ] 15.2 Implement context-aware processing
   - Check for existing context on new message
   - Resume processing with original + reply context
   - Clear context after successful processing
   - **Validates: Requirements 9.2**
 
-## Task 15: Fix Handler Component
+## Task 16: Fix Handler Component
 
-- [ ] 15.1 Implement fix command parsing
+- [ ] 16.1 Implement fix command parsing
   - Implement `parseFixCommand()` 
   - Match `fix:` prefix (case-insensitive)
   - Extract instruction text
   - **Validates: Requirements 10.1**
 
-- [ ] 15.2 Implement most recent receipt lookup
+- [ ] 16.2 Implement most recent receipt lookup
   - Implement `findMostRecentReceipt()` for user
   - Search receipts.jsonl by user_id
   - Return most recent non-fix receipt
   - **Validates: Requirements 10.2**
 
-- [ ] 15.3 Implement fix application
+- [ ] 16.3 Implement fix application
   - Implement `applyFix()` with AgentCore
   - Create new commit with correction
   - Reference prior commit in receipt
   - **Validates: Requirements 10.3, 10.4**
 
-## Task 16: Markdown Template Generation
+## Task 17: Markdown Template Generation
 
-- [ ] 16.1 Implement inbox entry template
+- [ ] 17.1 Implement inbox entry template
   - Format with date title
   - Chronological bullet entries with timestamps
   - Include classification hints
   - **Validates: Requirements 32.1-32.3**
 
-- [ ] 16.2 Implement idea note template
+- [ ] 17.2 Implement idea note template
   - Format with title, context, key points, implications, open questions, source
   - Keep atomic (one idea per file)
   - **Validates: Requirements 33.1, 33.2**
 
-- [ ] 16.3 Implement decision note template
+- [ ] 17.3 Implement decision note template
   - Format with decision statement, date, rationale, alternatives, consequences, source
   - Make decision statement explicit
   - **Validates: Requirements 34.1, 34.2**
 
-- [ ] 16.4 Implement project page template
+- [ ] 17.4 Implement project page template
   - Format with objective, status, key decisions, next steps, references
   - Link to related decision notes
   - **Validates: Requirements 35.1, 35.2**
 
-- [ ] 16.5 Implement Markdown style enforcement
+- [ ] 17.5 Implement Markdown style enforcement
   - Use headings not bold
   - Prefer bullets over prose
   - Use ISO dates
@@ -393,40 +449,40 @@
   - Include Source line
   - **Validates: Requirements 31.1-31.5**
 
-## Task 17: Worker Lambda Handler
+## Task 18: Worker Lambda Handler
 
-- [ ] 17.1 Implement Worker Lambda entry point
+- [ ] 18.1 Implement Worker Lambda entry point
   - Parse SQS event messages
   - Load system prompt on cold start
   - Wire together all components
   - **Validates: Requirements 3.3, 40.2**
 
-- [ ] 17.2 Implement main processing flow
+- [ ] 18.2 Implement main processing flow
   - Check idempotency (DynamoDB conditional write)
-  - Invoke Bedrock Agent for classification and Action Plan
+  - Invoke AgentCore Runtime via `invoke_agent_runtime()` boto3 call
   - Validate Action Plan against schema
   - Execute side effects in order: CodeCommit → SES → Slack
   - Format and deliver response to Slack (Lambda responsibility)
   - Write receipt to CodeCommit
   - **Validates: Requirements 6, 11, 15, 17, 42-44**
 
-- [ ] 17.3 Implement error handling
+- [ ] 18.3 Implement error handling
   - Handle AgentCore errors with retry
   - Handle CodeCommit conflicts with retry
   - Handle SES errors with user notification
   - Mark idempotency record as failed on error
   - **Validates: Requirements 20, 27**
 
-## Task 18: Observability
+## Task 19: Observability
 
-- [ ] 18.1 Implement structured logging
+- [ ] 19.1 Implement structured logging
   - Log event_id for every processed event
   - Log classification and confidence
   - Log action outcome
   - Log commit_id for successful commits
   - **Validates: Requirements 27.1-27.5**
 
-- [ ] 18.2 Implement PII protection
+- [ ] 19.2 Implement PII protection
   - Do not log message content in plain text
   - Do not log email addresses
   - Redact sensitive fields
