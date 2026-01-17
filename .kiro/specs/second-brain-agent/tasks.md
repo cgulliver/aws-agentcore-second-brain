@@ -605,7 +605,15 @@
 
 ## Task 25: AgentCore Memory Integration (OPTIONAL - v2)
 
-> **Note:** AgentCore Memory is optional for v1. These tasks are deferred unless personalization is required for correctness.
+> **Note:** AgentCore Memory is optional for v1. All v1 correctness requirements are satisfied without it:
+> - **Conversation context**: Handled by DynamoDB conversation table (Task 3.2)
+> - **Durable knowledge**: Stored in Git/CodeCommit (source of truth)
+> - **Idempotency**: Handled by DynamoDB idempotency table (Task 3.1)
+> - **User preferences**: Stored in SSM Parameter Store
+>
+> AgentCore Memory provides **behavioral learning over time** (learning user preferences, improving classification based on past interactions) — this is an enhancement for v2, not a v1 correctness requirement.
+>
+> **When to implement**: Add AgentCore Memory when you want the agent to learn and adapt to user patterns over time without manual configuration changes.
 
 - [ ]* 25.1 Implement AgentCore Memory for preferences
   - Store user preferences (confidence thresholds, taxonomy words)

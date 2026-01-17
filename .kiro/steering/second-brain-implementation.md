@@ -1552,3 +1552,155 @@ async function commitWithConflictRetry(
   throw new Error('Failed to commit after max retries');
 }
 ```
+
+
+---
+
+## AgentCore Memory Integration (v2 Reference)
+
+> **Note:** This section documents AgentCore Memory patterns for v2 implementation. AgentCore Memory is NOT required for v1 correctness — all v1 requirements are satisfied by DynamoDB (conversation context, idempotency) and Git (durable knowledge).
+
+### When to Add AgentCore Memory
+
+Add AgentCore Memory when you want the agent to:
+- Learn user preferences over time (confidence thresholds, taxonomy preferences)
+- Improve classification based on past interactions
+- Remember stable operating assumptions without manual configuration
+
+### AgentCore Memory Architecture
+
+AgentCore Memory provides two memory types:
+
+| Memory Type | Purpose | Retention |
+|-------------|---------|-----------|
+| **Short-Term Memory (STM)** | Conversation turns within a session | Session-scoped |
+| **Long-Term Memory (LTM)** | Extracted facts, preferences, summaries | Configurable (e.g., 90 days) |
+
+### Integration with Strands Agents SDK
+
+AgentCore uses the `strands-agents` SDK for agent implementation:
+
+```python
+# Example: AgentCore with Memory (Python)
+from strands import Agent
+from strands.memory import AgentCoreMemorySessionManager, AgentCoreMemoryConfig
+
+# Configure memory
+memory_config = AgentCoreMemoryConfig(
+    memory_id="second-brain-memory",
+    namespace="user-preferences"
+)
+
+# Create session manager
+session_manager = AgentCoreMemorySessionManager(config=memory_config)
+
+# Create agent with memory
+agent = Agent(
+    model="us.anthropic.claude-sonnet-4-20250514",
+    system_prompt=system_prompt,
+    session_manager=session_manager
+)
+
+# Invoke with session continuity
+response = agent.invoke(
+    user_message,
+    session_id=f"{channel_id}:{user_id}"
+)
+```
+
+### CDK: AgentCore Memory Resource
+
+```typescript
+import * as agentcore from '@aws-cdk/aws-bedrock-agentcore-alpha';
+
+// Create AgentCore Memory with strategies
+const memory = new agentcore.Memory(this, 'SecondBrainMemory', {
+  memoryName: 'second-brain-behavioral-context',
+  description: 'Behavioral context for Second Brain agent',
+  expirationDuration: cdk.Duration.days(90),
+  memoryStrategies: [
+    // Learn user preferences from interactions
+    agentcore.MemoryStrategy.usingBuiltInUserPreference(),
+    // Summarize sessions for context
+    agentcore.MemoryStrategy.usingBuiltInSummarization(),
+  ],
+});
+
+// Grant Lambda access to memory
+memory.grantReadWrite(workerLambda);
+```
+
+### Memory Strategy Selection
+
+| Strategy | Use Case | Second Brain Application |
+|----------|----------|-------------------------|
+| `UserPreference` | Learn user preferences | Confidence thresholds, taxonomy preferences |
+| `Summarization` | Session summaries | Conversation context for follow-ups |
+| `SemanticMemory` | Fact extraction | Operating assumptions |
+
+### What Goes in AgentCore Memory (v2)
+
+| Category | Example | Store Here? |
+|----------|---------|-------------|
+| User preferences | "confidence threshold = 0.85" | ✓ Yes |
+| Operating assumptions | "tasks go to OmniFocus" | ✓ Yes |
+| Clarification state | "awaiting classification response" | ✓ Yes (short-lived) |
+| Full notes | idea content, decision rationale | ✗ No (Git only) |
+| Receipts | audit log entries | ✗ No (Git only) |
+| Idempotency keys | event_id tracking | ✗ No (DynamoDB only) |
+
+### Golden Rule
+
+**If Git and AgentCore Memory conflict, Git wins.**
+
+AgentCore Memory is advisory — it helps the agent make better decisions, but Git remains the source of truth for all durable knowledge.
+
+### Deployment: AgentCore CLI
+
+AgentCore agents are deployed via CLI:
+
+```bash
+# Configure AgentCore (one-time)
+agentcore configure
+
+# Deploy agent with memory
+agentcore deploy --memory second-brain-behavioral-context
+
+# Invoke agent (for testing)
+agentcore invoke --agent-id <agent-id> --input "Test message"
+```
+
+### Lambda Integration (v2)
+
+When AgentCore Memory is enabled, the Worker Lambda invokes AgentCore with session context:
+
+```typescript
+import { BedrockAgentCoreClient, InvokeAgentCommand } from '@aws-sdk/client-bedrock-agentcore';
+
+const client = new BedrockAgentCoreClient({});
+
+async function invokeAgentWithMemory(
+  agentId: string,
+  sessionId: string,
+  inputText: string,
+  systemPrompt: string
+): Promise<string> {
+  const command = new InvokeAgentCommand({
+    agentId,
+    sessionId, // Enables memory continuity
+    inputText: `${systemPrompt}\n\n---\nUser Message:\n${inputText}`,
+    enableMemory: true, // Enable STM/LTM
+  });
+
+  const response = await client.send(command);
+  return response.output ?? '';
+}
+```
+
+### Migration Path: v1 → v2
+
+1. **v1**: DynamoDB handles conversation context, Git handles knowledge
+2. **v2**: Add AgentCore Memory for behavioral learning
+3. **Migration**: No data migration needed — AgentCore Memory learns from new interactions
+
+The v1 architecture is designed to be compatible with v2 AgentCore Memory addition without breaking changes.
