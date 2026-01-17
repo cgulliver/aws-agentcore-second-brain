@@ -23,25 +23,25 @@
 
 ## Task 2: Ingress Stack Infrastructure
 
-- [ ] 2.1 Create SQS Queue with DLQ
+- [x] 2.1 Create SQS Queue with DLQ
   - Define primary queue with visibility timeout
   - Define dead-letter queue with 14-day retention
   - Configure redrive policy (maxReceiveCount: 3)
   - **Validates: Requirement 3, 28**
 
-- [ ] 2.2 Create Ingress Lambda function
+- [x] 2.2 Create Ingress Lambda function
   - Define Lambda function with Node.js 20 runtime
   - Configure Lambda Function URL (Auth = NONE)
   - Set environment variables for queue URL
   - Grant SQS send permissions
   - **Validates: Requirements 3, 28**
 
-- [ ] 2.3 Configure SSM Parameter references for Ingress
+- [x] 2.3 Configure SSM Parameter references for Ingress
   - Reference `/second-brain/slack-signing-secret` (SecureString)
   - Grant Lambda read access to parameter
   - **Validates: Requirements 23, 25**
 
-- [ ] 2.4 Export Ingress Stack outputs
+- [x] 2.4 Export Ingress Stack outputs
   - Export SQS Queue ARN for Core Stack
   - Export Lambda Function URL for Slack configuration
   - **Validates: Requirement 28**
