@@ -1,5 +1,5 @@
 /**
- * Worker Lambda Handler
+ * Worker Lambda Handler (v2)
  * 
  * Processes Slack events from SQS:
  * - Idempotency check (DynamoDB)
@@ -13,47 +13,506 @@
  */
 
 import type { SQSEvent, SQSBatchResponse, SQSBatchItemFailure } from 'aws-lambda';
-import type { SQSEventMessage } from '../types';
+import type { SQSEventMessage, Classification } from '../types';
+import {
+  tryAcquireLock,
+  updateExecutionState,
+  markCompleted,
+  markFailed,
+  type IdempotencyConfig,
+} from '../components/idempotency-guard';
+import {
+  loadSystemPrompt,
+  type SystemPromptConfig,
+} from '../components/system-prompt-loader';
+import {
+  invokeAgentRuntime,
+  shouldAskClarification,
+  generateClarificationPrompt,
+  type AgentCoreConfig,
+} from '../components/agentcore-client';
+import {
+  validateActionPlan,
+  type ActionPlan,
+} from '../components/action-plan';
+import {
+  executeActionPlan,
+  type ExecutorConfig,
+} from '../components/action-executor';
+import {
+  createReceipt,
+  appendReceipt,
+  type SlackContext,
+} from '../components/receipt-logger';
+import {
+  getContext,
+  setContext,
+  deleteContext,
+  type ConversationStoreConfig,
+} from '../components/conversation-context';
+import {
+  formatConfirmationReply,
+  formatClarificationReply,
+  formatErrorReply,
+  sendSlackReply,
+} from '../components/slack-responder';
+import {
+  parseFixCommand,
+  getFixableReceipt,
+  applyFix,
+  canApplyFix,
+} from '../components/fix-handler';
+import type { KnowledgeStoreConfig } from '../components/knowledge-store';
+import { log, redactPII } from './logging';
 
 // Environment variables
 const REPOSITORY_NAME = process.env.REPOSITORY_NAME!;
 const IDEMPOTENCY_TABLE = process.env.IDEMPOTENCY_TABLE!;
 const CONVERSATION_TABLE = process.env.CONVERSATION_TABLE!;
 const AGENT_RUNTIME_ARN = process.env.AGENT_RUNTIME_ARN!;
-const BOT_TOKEN_PARAM = process.env.BOT_TOKEN_PARAM!;
-const MAILDROP_PARAM = process.env.MAILDROP_PARAM!;
-const CONVERSATION_TTL_PARAM = process.env.CONVERSATION_TTL_PARAM!;
+const BOT_TOKEN_PARAM = process.env.BOT_TOKEN_PARAM || '/second-brain/slack-bot-token';
+const MAILDROP_PARAM = process.env.MAILDROP_PARAM || '/second-brain/maildrop-email';
+const CONVERSATION_TTL_PARAM = process.env.CONVERSATION_TTL_PARAM || '/second-brain/conversation-ttl-seconds';
+const SES_FROM_EMAIL = process.env.SES_FROM_EMAIL || 'noreply@example.com';
 const EMAIL_MODE = process.env.EMAIL_MODE || 'live';
+const AWS_REGION = process.env.AWS_REGION || 'us-east-1';
+
+// Configuration objects
+const idempotencyConfig: IdempotencyConfig = {
+  tableName: IDEMPOTENCY_TABLE,
+  ttlDays: 7,
+};
+
+const knowledgeConfig: KnowledgeStoreConfig = {
+  repositoryName: REPOSITORY_NAME,
+  branchName: 'main',
+};
+
+const conversationConfig: ConversationStoreConfig = {
+  tableName: CONVERSATION_TABLE,
+  ttlParam: CONVERSATION_TTL_PARAM,
+};
+
+const agentConfig: AgentCoreConfig = {
+  agentRuntimeArn: AGENT_RUNTIME_ARN,
+  region: AWS_REGION,
+};
+
+const systemPromptConfig: SystemPromptConfig = {
+  repositoryName: REPOSITORY_NAME,
+  branchName: 'main',
+  promptPath: 'system/agent-system-prompt.md',
+};
+
+// Cached system prompt
+let cachedSystemPrompt: { content: string; metadata: { commitId: string; sha256: string } } | null = null;
+
+/**
+ * Load system prompt (cached for Lambda lifetime)
+ */
+async function getSystemPrompt(): Promise<{ content: string; metadata: { commitId: string; sha256: string } }> {
+  if (cachedSystemPrompt) {
+    return cachedSystemPrompt;
+  }
+
+  const result = await loadSystemPrompt(systemPromptConfig);
+  cachedSystemPrompt = {
+    content: result.content,
+    metadata: {
+      commitId: result.metadata.commitId,
+      sha256: result.metadata.sha256,
+    },
+  };
+  
+  log('info', 'System prompt loaded', {
+    hash: result.metadata.sha256.substring(0, 8),
+    commitId: result.metadata.commitId,
+  });
+
+  return cachedSystemPrompt;
+}
 
 /**
  * Process a single SQS message
+ * 
+ * Validates: Requirements 3.3, 6, 11, 15, 17, 19-22, 42-44
  */
 async function processMessage(message: SQSEventMessage): Promise<void> {
-  const { event_id, user_id, channel_id, message_text, message_ts } = message;
+  const { event_id, user_id, channel_id, message_text, message_ts, thread_ts } = message;
 
-  console.log('Processing message', {
+  log('info', 'Processing message', {
     event_id,
+    user_id: redactPII(user_id),
+    channel_id,
+  });
+
+  // Build Slack context
+  const slackContext: SlackContext = {
     user_id,
     channel_id,
     message_ts,
+    thread_ts,
+  };
+
+  // Step 1: Idempotency check
+  const lockAcquired = await tryAcquireLock(idempotencyConfig, event_id);
+  if (!lockAcquired) {
+    log('info', 'Duplicate event, skipping', { event_id });
+    return;
+  }
+
+  await updateExecutionState(idempotencyConfig, event_id, { status: 'RECEIVED' });
+
+  try {
+    // Step 2: Check for fix command
+    const fixCommand = parseFixCommand(message_text);
+    if (fixCommand.isFixCommand) {
+      await handleFixCommand(event_id, slackContext, fixCommand.instruction);
+      return;
+    }
+
+    // Step 3: Check for existing conversation context (clarification response)
+    const existingContext = await getContext(conversationConfig, channel_id, user_id);
+    if (existingContext) {
+      await handleClarificationResponse(event_id, slackContext, message_text, existingContext);
+      return;
+    }
+
+    // Step 4: Load system prompt
+    const systemPrompt = await getSystemPrompt();
+
+    // Step 5: Invoke AgentCore for classification
+    await updateExecutionState(idempotencyConfig, event_id, { status: 'PLANNED' });
+
+    const agentResult = await invokeAgentRuntime(agentConfig, {
+      prompt: message_text,
+      system_prompt: systemPrompt.content,
+      session_id: `${channel_id}#${user_id}`,
+    });
+
+    if (!agentResult.success || !agentResult.actionPlan) {
+      throw new Error(agentResult.error || 'AgentCore invocation failed');
+    }
+
+    const actionPlan = agentResult.actionPlan;
+
+    log('info', 'Classification result', {
+      event_id,
+      classification: actionPlan.classification,
+      confidence: actionPlan.confidence,
+    });
+
+    // Step 6: Validate Action Plan
+    const validation = validateActionPlan(actionPlan);
+    if (!validation.valid) {
+      await handleValidationFailure(event_id, slackContext, validation.errors.map(e => e.message));
+      return;
+    }
+
+    // Step 7: Check if clarification needed
+    if (shouldAskClarification(actionPlan.confidence, actionPlan.classification)) {
+      await handleLowConfidence(event_id, slackContext, message_text, actionPlan);
+      return;
+    }
+
+    // Step 8: Execute side effects
+    await executeAndFinalize(event_id, slackContext, actionPlan, systemPrompt);
+
+  } catch (error) {
+    log('error', 'Processing failed', {
+      event_id,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+
+    await markFailed(idempotencyConfig, event_id, error instanceof Error ? error.message : 'Unknown error');
+
+    // Send error reply to user
+    await sendSlackReply(
+      { botTokenParam: BOT_TOKEN_PARAM },
+      {
+        channel: channel_id,
+        text: formatErrorReply('Processing failed. Please try again.'),
+        thread_ts,
+      }
+    );
+
+    throw error;
+  }
+}
+
+/**
+ * Handle fix command
+ */
+async function handleFixCommand(
+  eventId: string,
+  slackContext: SlackContext,
+  instruction: string
+): Promise<void> {
+  log('info', 'Processing fix command', { event_id: eventId });
+
+  // Get the most recent fixable receipt
+  const priorReceipt = await getFixableReceipt(knowledgeConfig, slackContext.user_id);
+  const canFix = canApplyFix(priorReceipt);
+
+  if (!canFix.canFix) {
+    await sendSlackReply(
+      { botTokenParam: BOT_TOKEN_PARAM },
+      {
+        channel: slackContext.channel_id,
+        text: formatErrorReply(canFix.reason || 'Cannot apply fix'),
+        thread_ts: slackContext.thread_ts,
+      }
+    );
+    await markFailed(idempotencyConfig, eventId, canFix.reason || 'Cannot apply fix');
+    return;
+  }
+
+  // Apply the fix
+  const systemPrompt = await getSystemPrompt();
+  const fixResult = await applyFix(
+    knowledgeConfig,
+    agentConfig,
+    priorReceipt!,
+    instruction,
+    systemPrompt.content
+  );
+
+  if (!fixResult.success) {
+    await sendSlackReply(
+      { botTokenParam: BOT_TOKEN_PARAM },
+      {
+        channel: slackContext.channel_id,
+        text: formatErrorReply(fixResult.error || 'Fix failed'),
+        thread_ts: slackContext.thread_ts,
+      }
+    );
+    await markFailed(idempotencyConfig, eventId, fixResult.error || 'Fix failed');
+    return;
+  }
+
+  // Create receipt for fix
+  const receipt = createReceipt(
+    eventId,
+    slackContext,
+    'fix',
+    1.0,
+    [{ type: 'commit', status: 'success', details: { commitId: fixResult.commitId } }],
+    fixResult.filesModified || [],
+    fixResult.commitId || null,
+    `Fix applied: ${instruction.substring(0, 50)}`,
+    { priorCommitId: fixResult.priorCommitId }
+  );
+
+  await appendReceipt(knowledgeConfig, receipt);
+
+  // Send confirmation
+  await sendSlackReply(
+    { botTokenParam: BOT_TOKEN_PARAM },
+    {
+      channel: slackContext.channel_id,
+      text: formatConfirmationReply('fix', fixResult.filesModified || [], fixResult.commitId || null),
+      thread_ts: slackContext.thread_ts,
+    }
+  );
+
+  await markCompleted(idempotencyConfig, eventId);
+  log('info', 'Fix completed', { event_id: eventId, commit_id: fixResult.commitId });
+}
+
+/**
+ * Handle clarification response
+ */
+async function handleClarificationResponse(
+  eventId: string,
+  slackContext: SlackContext,
+  responseText: string,
+  context: Awaited<ReturnType<typeof getContext>>
+): Promise<void> {
+  if (!context) return;
+
+  log('info', 'Processing clarification response', { event_id: eventId });
+
+  // Check if response is a reclassify command
+  const reclassifyMatch = responseText.match(/^reclassify:\s*(\w+)$/i);
+  let classification: Classification;
+
+  if (reclassifyMatch) {
+    classification = reclassifyMatch[1].toLowerCase() as Classification;
+  } else {
+    // Try to match response to classification options
+    const validClassifications: Classification[] = ['inbox', 'idea', 'decision', 'project', 'task'];
+    const matchedClassification = validClassifications.find(
+      c => responseText.toLowerCase().includes(c)
+    );
+    classification = matchedClassification || 'inbox';
+  }
+
+  // Clear conversation context
+  await deleteContext(conversationConfig, slackContext.channel_id, slackContext.user_id);
+
+  // Re-process with forced classification
+  const systemPrompt = await getSystemPrompt();
+  const agentResult = await invokeAgentRuntime(agentConfig, {
+    prompt: `Classify this as "${classification}": ${context.original_message}`,
+    system_prompt: systemPrompt.content,
+    session_id: `${slackContext.channel_id}#${slackContext.user_id}`,
   });
 
-  // TODO: Task 5 - Implement idempotency guard
-  // TODO: Task 8 - Load system prompt
-  // TODO: Task 12 - Invoke AgentCore Runtime
-  // TODO: Task 9 - Validate Action Plan
-  // TODO: Task 10 - Execute side effects
-  // TODO: Task 7 - Write receipt
+  if (!agentResult.success || !agentResult.actionPlan) {
+    throw new Error(agentResult.error || 'AgentCore invocation failed');
+  }
 
-  // Placeholder implementation
-  console.log('Worker handler placeholder - full implementation in later tasks');
+  // Override classification with user's choice
+  const actionPlan = {
+    ...agentResult.actionPlan,
+    classification,
+    confidence: 1.0, // User confirmed
+  };
+
+  await executeAndFinalize(eventId, slackContext, actionPlan, systemPrompt);
+}
+
+/**
+ * Handle low confidence - ask for clarification
+ */
+async function handleLowConfidence(
+  eventId: string,
+  slackContext: SlackContext,
+  originalMessage: string,
+  actionPlan: ActionPlan
+): Promise<void> {
+  log('info', 'Low confidence, asking clarification', {
+    event_id: eventId,
+    confidence: actionPlan.confidence,
+  });
+
+  // Store conversation context
+  await setContext(conversationConfig, slackContext.channel_id, slackContext.user_id, {
+    original_event_id: eventId,
+    original_message: originalMessage,
+    original_classification: actionPlan.classification,
+    original_confidence: actionPlan.confidence,
+    clarification_asked: generateClarificationPrompt(actionPlan.classification, actionPlan.confidence),
+  });
+
+  // Send clarification request
+  const clarificationText = formatClarificationReply(
+    "I'm not sure how to classify this. Is it:",
+    ['inbox', 'idea', 'decision', 'project', 'task']
+  );
+
+  await sendSlackReply(
+    { botTokenParam: BOT_TOKEN_PARAM },
+    {
+      channel: slackContext.channel_id,
+      text: clarificationText,
+      thread_ts: slackContext.thread_ts,
+    }
+  );
+
+  // Create receipt for clarification
+  const receipt = createReceipt(
+    eventId,
+    slackContext,
+    'clarify',
+    actionPlan.confidence,
+    [{ type: 'slack_reply', status: 'success', details: { type: 'clarification' } }],
+    [],
+    null,
+    'Clarification requested'
+  );
+
+  await appendReceipt(knowledgeConfig, receipt);
+  await markCompleted(idempotencyConfig, eventId);
+}
+
+/**
+ * Handle validation failure
+ */
+async function handleValidationFailure(
+  eventId: string,
+  slackContext: SlackContext,
+  errors: string[]
+): Promise<void> {
+  log('warn', 'Action plan validation failed', { event_id: eventId, errors });
+
+  await sendSlackReply(
+    { botTokenParam: BOT_TOKEN_PARAM },
+    {
+      channel: slackContext.channel_id,
+      text: formatErrorReply('Invalid response from classifier', errors),
+      thread_ts: slackContext.thread_ts,
+    }
+  );
+
+  // Create failure receipt
+  const receipt = createReceipt(
+    eventId,
+    slackContext,
+    'inbox', // Default
+    0,
+    [],
+    [],
+    null,
+    'Validation failed',
+    { validationErrors: errors }
+  );
+
+  await appendReceipt(knowledgeConfig, receipt);
+  await markFailed(idempotencyConfig, eventId, `Validation failed: ${errors.join(', ')}`);
+}
+
+/**
+ * Execute action plan and finalize
+ */
+async function executeAndFinalize(
+  eventId: string,
+  slackContext: SlackContext,
+  actionPlan: ActionPlan,
+  systemPrompt: { content: string; metadata: { commitId: string; sha256: string } }
+): Promise<void> {
+  await updateExecutionState(idempotencyConfig, eventId, { status: 'EXECUTING' });
+
+  // Build executor config
+  const executorConfig: ExecutorConfig = {
+    knowledgeStore: knowledgeConfig,
+    idempotency: idempotencyConfig,
+    sesRegion: AWS_REGION,
+    slackBotTokenParam: BOT_TOKEN_PARAM,
+    mailDropParam: MAILDROP_PARAM,
+    emailMode: EMAIL_MODE === 'log-only' ? 'log' : 'live',
+    senderEmail: SES_FROM_EMAIL,
+  };
+
+  // Execute the action plan
+  const result = await executeActionPlan(
+    executorConfig,
+    eventId,
+    actionPlan,
+    slackContext,
+    { commitId: systemPrompt.metadata.commitId, sha256: systemPrompt.metadata.sha256, loadedAt: new Date().toISOString() }
+  );
+
+  if (result.success) {
+    await markCompleted(idempotencyConfig, eventId, result.commitId, result.receiptCommitId);
+    log('info', 'Processing completed', {
+      event_id: eventId,
+      classification: actionPlan.classification,
+      commit_id: result.commitId,
+    });
+  } else {
+    log('warn', 'Execution failed', {
+      event_id: eventId,
+      error: result.error,
+    });
+  }
 }
 
 /**
  * Lambda handler for SQS events
  */
 export async function handler(event: SQSEvent): Promise<SQSBatchResponse> {
-  console.log('Worker received event', {
+  log('info', 'Worker received event', {
     recordCount: event.Records.length,
   });
 
@@ -64,9 +523,9 @@ export async function handler(event: SQSEvent): Promise<SQSBatchResponse> {
       const message = JSON.parse(record.body) as SQSEventMessage;
       await processMessage(message);
     } catch (error) {
-      console.error('Failed to process message', {
+      log('error', 'Failed to process message', {
         messageId: record.messageId,
-        error,
+        error: error instanceof Error ? error.message : 'Unknown error',
       });
       batchItemFailures.push({
         itemIdentifier: record.messageId,

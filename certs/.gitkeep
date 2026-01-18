@@ -1,0 +1,5 @@
+# This directory contains mTLS certificates for Slack webhook authentication.
+# 
+# The actual .pem files are gitignored - run ./scripts/setup-truststore.sh to download them.
+#
+# See docs/SETUP.md for details on mTLS configuration.

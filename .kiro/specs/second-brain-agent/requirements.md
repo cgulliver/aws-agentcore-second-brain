@@ -328,10 +328,25 @@ The system prioritizes simplicity, trust, and long-term durability. Slack handle
 1. THE System SHALL define all AWS resources using AWS CDK (TypeScript)
 2. THE System SHALL be deployable via CDK deploy commands
 3. THE CDK SHALL be organized into two stacks: Ingress Stack and Core Stack
-4. THE Ingress Stack SHALL include: Ingress Lambda, Lambda Function URL, SQS Queue, SQS DLQ
+4. THE Ingress Stack SHALL include: Ingress Lambda, API Gateway HTTP API, Custom Domain, Route 53 DNS Record, SQS Queue, SQS DLQ
 5. THE Core Stack SHALL include: Worker Lambda, CodeCommit Repository, DynamoDB Table, SES Email Identity, IAM roles
-6. THE System SHALL use Lambda Function URLs (not API Gateway) for the Slack webhook endpoint
-7. THE Lambda Function URL SHALL be configured with Auth = NONE (application-layer HMAC verification)
+6. THE System SHALL use API Gateway HTTP API with custom domain for the Slack webhook endpoint (Lambda Function URLs prohibited per security policy)
+7. THE API Gateway default execute-api endpoint SHALL be disabled
+8. THE custom domain, hosted zone ID, and ACM certificate ARN SHALL be loaded from SSM Parameter Store (not hardcoded)
+
+### Requirement 28a: Security Delta - API Gateway Ingress
+
+**User Story:** As a security officer, I want all externally reachable endpoints to traverse API Gateway with custom domain, so that security policy is satisfied.
+
+#### Acceptance Criteria
+
+1. THE System SHALL NOT use Lambda Function URLs for Slack ingress (auth=NONE prohibited)
+2. THE Slack ingress SHALL use Amazon API Gateway HTTP API with custom domain
+3. THE API Gateway default execute-api endpoint SHALL be disabled
+4. THE custom domain SHALL use an existing ACM certificate (imported by ARN from SSM)
+5. THE System SHALL create a Route 53 Alias A record pointing to the API Gateway custom domain
+6. THE domain name, hosted zone ID, and ACM certificate ARN SHALL be provided via SSM Parameter Store
+7. THE repository SHALL NOT contain hardcoded domain names, hosted zone IDs, or certificate ARNs
 
 
 ### Requirement 29: Repository Structure

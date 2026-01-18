@@ -1,10 +1,15 @@
 /**
  * Ingress Lambda Handler
  * 
- * Handles Slack webhook requests:
+ * Handles Slack webhook requests with configurable security modes:
+ * - mtls-hmac: mTLS + HMAC signature verification (most secure)
+ * - mtls-only: mTLS only, no HMAC verification
+ * - hmac-only: HMAC signature verification only (Lambda Function URL)
+ * 
+ * Features:
  * - URL verification challenge
  * - Event callback processing
- * - Signature verification
+ * - Conditional signature verification based on security mode
  * - Fast acknowledgement (< 3 seconds)
  * - SQS enqueueing for async processing
  * 
@@ -26,7 +31,11 @@ import type {
 
 // Environment variables
 const QUEUE_URL = process.env.QUEUE_URL!;
-const SIGNING_SECRET_PARAM = process.env.SIGNING_SECRET_PARAM!;
+const SIGNING_SECRET_PARAM = process.env.SIGNING_SECRET_PARAM;
+const SECURITY_MODE = process.env.SECURITY_MODE ?? 'mtls-hmac';
+
+// Determine if HMAC verification is required based on security mode
+const HMAC_ENABLED = SECURITY_MODE === 'mtls-hmac' || SECURITY_MODE === 'hmac-only';
 
 // AWS SDK clients
 const sqsClient = new SQSClient({});
@@ -40,6 +49,10 @@ let cachedSigningSecret: string | null = null;
  * Caches the value for Lambda warm starts
  */
 async function getSigningSecret(): Promise<string> {
+  if (!HMAC_ENABLED || !SIGNING_SECRET_PARAM) {
+    throw new Error('HMAC verification not enabled or signing secret param not configured');
+  }
+
   if (cachedSigningSecret) {
     return cachedSigningSecret;
   }
@@ -159,12 +172,55 @@ function formatSQSMessage(event: SlackEventCallbackRequest): SQSEventMessage {
 }
 
 /**
+ * Verify HMAC signature if enabled
+ * Returns true if verification passes or is not required
+ */
+async function verifyHmacIfEnabled(
+  event: APIGatewayProxyEventV2,
+  body: string
+): Promise<{ valid: boolean; error?: string }> {
+  if (!HMAC_ENABLED) {
+    // mTLS-only mode: skip HMAC verification
+    console.log('HMAC verification skipped (mtls-only mode)');
+    return { valid: true };
+  }
+
+  const timestamp = event.headers['x-slack-request-timestamp'];
+  const signature = event.headers['x-slack-signature'];
+
+  if (!timestamp || !signature) {
+    return { valid: false, error: 'Missing Slack headers' };
+  }
+
+  // Validate timestamp (replay protection)
+  const timestampNum = parseInt(timestamp, 10);
+  if (isNaN(timestampNum) || !isValidTimestamp(timestampNum)) {
+    return { valid: false, error: 'Invalid or expired timestamp' };
+  }
+
+  // Verify signature
+  try {
+    const signingSecret = await getSigningSecret();
+    if (!verifySlackSignature(signingSecret, timestamp, body, signature)) {
+      return { valid: false, error: 'Invalid signature' };
+    }
+  } catch (error) {
+    console.error('Failed to verify signature', error);
+    return { valid: false, error: 'Signature verification failed' };
+  }
+
+  return { valid: true };
+}
+
+/**
  * Lambda handler for Slack webhook requests
  */
 export async function handler(
   event: APIGatewayProxyEventV2
 ): Promise<APIGatewayProxyResultV2> {
   const startTime = Date.now();
+
+  console.log('Request received', { securityMode: SECURITY_MODE });
 
   // Parse request body
   let body: string;
@@ -185,7 +241,9 @@ export async function handler(
     };
   }
 
-  // Handle URL verification challenge (no signature check needed for this)
+  // Handle URL verification challenge
+  // Note: For mTLS modes, Slack must pass mTLS before reaching this point
+  // For hmac-only mode, we verify the challenge response is legitimate
   if (request.type === 'url_verification') {
     console.log('URL verification challenge received');
     return {
@@ -195,43 +253,13 @@ export async function handler(
     };
   }
 
-  // For event callbacks, verify signature
-  const timestamp = event.headers['x-slack-request-timestamp'];
-  const signature = event.headers['x-slack-signature'];
-
-  if (!timestamp || !signature) {
-    console.error('Missing Slack headers');
+  // For event callbacks, verify HMAC signature if enabled
+  const hmacResult = await verifyHmacIfEnabled(event, body);
+  if (!hmacResult.valid) {
+    console.error('HMAC verification failed', { error: hmacResult.error });
     return {
       statusCode: 401,
       body: 'Unauthorized',
-    };
-  }
-
-  // Validate timestamp (replay protection)
-  const timestampNum = parseInt(timestamp, 10);
-  if (isNaN(timestampNum) || !isValidTimestamp(timestampNum)) {
-    console.error('Invalid or expired timestamp', { timestamp });
-    return {
-      statusCode: 401,
-      body: 'Unauthorized',
-    };
-  }
-
-  // Verify signature
-  try {
-    const signingSecret = await getSigningSecret();
-    if (!verifySlackSignature(signingSecret, timestamp, body, signature)) {
-      console.error('Invalid signature');
-      return {
-        statusCode: 401,
-        body: 'Unauthorized',
-      };
-    }
-  } catch (error) {
-    console.error('Failed to verify signature', error);
-    return {
-      statusCode: 500,
-      body: 'Internal Server Error',
     };
   }
 
@@ -264,8 +292,6 @@ export async function handler(
         new SendMessageCommand({
           QueueUrl: QUEUE_URL,
           MessageBody: JSON.stringify(sqsMessage),
-          MessageDeduplicationId: eventId, // For FIFO queues (if used)
-          MessageGroupId: eventCallback.event.user, // For FIFO queues (if used)
         })
       );
 

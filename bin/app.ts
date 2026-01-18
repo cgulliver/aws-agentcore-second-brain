@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import 'source-map-support/register';
 import * as cdk from 'aws-cdk-lib';
-import { IngressStack } from '../lib/ingress-stack';
+import { IngressStack, IngressSecurityMode } from '../lib/ingress-stack';
 import { CoreStack } from '../lib/core-stack';
 
 const app = new cdk.App();
@@ -11,10 +11,23 @@ const env = {
   region: process.env.CDK_DEFAULT_REGION ?? 'us-east-1',
 };
 
-// Ingress Stack: Lambda Function URL + SQS Queue
+// Get security mode from CDK context (default: mtls-hmac)
+// Usage: cdk deploy -c securityMode=hmac-only
+const securityMode = app.node.tryGetContext('securityMode') as IngressSecurityMode | undefined;
+
+// Validate security mode if provided
+const validModes: IngressSecurityMode[] = ['mtls-hmac', 'mtls-only', 'hmac-only'];
+if (securityMode && !validModes.includes(securityMode)) {
+  throw new Error(
+    `Invalid securityMode: ${securityMode}. Valid options: ${validModes.join(', ')}`
+  );
+}
+
+// Ingress Stack: Slack webhook endpoint + SQS Queue
 const ingressStack = new IngressStack(app, 'SecondBrainIngressStack', {
   env,
-  description: 'Second Brain Agent - Ingress (Lambda Function URL, SQS)',
+  description: `Second Brain Agent - Ingress (${securityMode ?? 'mtls-hmac'} mode)`,
+  securityMode,
 });
 
 // Core Stack: Worker Lambda + CodeCommit + DynamoDB + SES + AgentCore

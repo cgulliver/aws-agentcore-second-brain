@@ -8,7 +8,10 @@
  */
 
 import { createHash } from 'crypto';
+import { CloudWatchClient, PutMetricDataCommand } from '@aws-sdk/client-cloudwatch';
 import { readFile, getLatestCommitId, type KnowledgeStoreConfig } from './knowledge-store';
+
+const cloudWatchClient = new CloudWatchClient({});
 
 // System prompt configuration
 export interface SystemPromptConfig {
@@ -136,7 +139,7 @@ export async function loadSystemPrompt(
         path: promptPath,
         repository: config.repositoryName,
       });
-      return createFallbackPrompt();
+      return await createFallbackPrompt();
     }
 
     // Validate structure
@@ -164,7 +167,7 @@ export async function loadSystemPrompt(
     return prompt;
   } catch (error) {
     console.error('Failed to load system prompt, using fallback', { error });
-    return createFallbackPrompt();
+    return await createFallbackPrompt();
   }
 }
 
@@ -173,11 +176,23 @@ export async function loadSystemPrompt(
  * 
  * Validates: Requirements 40.5, 40.6
  */
-function createFallbackPrompt(): SystemPrompt {
+async function createFallbackPrompt(): Promise<SystemPrompt> {
   console.error('Using minimal safe prompt fallback');
   
-  // TODO: Emit CloudWatch metric for prompt load failure
-  // This would require CloudWatch client integration
+  // Emit CloudWatch metric for prompt load failure
+  try {
+    await cloudWatchClient.send(new PutMetricDataCommand({
+      Namespace: 'SecondBrain',
+      MetricData: [{
+        MetricName: 'SystemPromptLoadFailure',
+        Value: 1,
+        Unit: 'Count',
+        Dimensions: [{ Name: 'Component', Value: 'SystemPromptLoader' }],
+      }],
+    }));
+  } catch (metricError) {
+    console.error('Failed to emit CloudWatch metric:', metricError);
+  }
 
   return {
     content: MINIMAL_SAFE_PROMPT,

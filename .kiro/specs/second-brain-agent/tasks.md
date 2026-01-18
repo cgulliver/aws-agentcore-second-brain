@@ -341,26 +341,26 @@
 
 > **Note:** The classifier runs as a containerized AgentCore Runtime. It receives prompts via `invoke_agent_runtime()` and returns Action Plan JSON. Lambda handles all side effects.
 
-- [ ] 11.1 Create classifier agent Python project structure
+- [x] 11.1 Create classifier agent Python project structure
   - Create `agent/` directory with `classifier.py`, `requirements.txt`, `Dockerfile`
   - Configure for ARM64 architecture (Graviton)
   - Install dependencies: `strands-agents`, `bedrock-agentcore`
   - **Validates: Requirements 6.3**
 
-- [ ] 11.2 Implement classifier agent entry point
+- [x] 11.2 Implement classifier agent entry point
   - Create `BedrockAgentCoreApp` with `@app.entrypoint` decorator
   - Parse incoming payload for `prompt` and `session_id`
   - Create Strands `Agent` with system prompt
   - Return Action Plan JSON response
   - **Validates: Requirements 6.3, 42.1**
 
-- [ ] 11.3 Implement Action Plan generation prompt
+- [x] 11.3 Implement Action Plan generation prompt
   - Construct prompt: system prompt (passed in payload) + user message
   - Instruct agent to output valid Action Plan JSON
   - Include classification rules, confidence scoring, output contract
   - **Validates: Requirements 6.1, 6.2, 41, 42**
 
-- [ ] 11.4 Create Dockerfile for classifier agent
+- [x] 11.4 Create Dockerfile for classifier agent
   - Use Python 3.11 slim base image
   - Install dependencies from requirements.txt
   - Set entrypoint to run classifier.py
@@ -369,33 +369,33 @@
 
 ## Task 12: AgentCore Invocation from Lambda
 
-- [ ] 12.1 Implement AgentCore Runtime client
+- [x] 12.1 Implement AgentCore Runtime client
   - Create `invokeAgentRuntime()` using boto3 `bedrock-agentcore` client
   - Pass `agentRuntimeArn`, `qualifier`, and `payload`
   - Handle streaming response (text/event-stream)
   - Parse and return Action Plan JSON
   - **Validates: Requirements 6.3**
 
-- [ ] 12.2 Implement AgentCore client mock for testing
+- [x] 12.2 Implement AgentCore client mock for testing
   - Create mock implementation that returns fixture Action Plans
   - Use deterministic responses based on input patterns
   - No live AgentCore calls in unit tests
   - **Validates: Testing strategy**
 
-- [ ] 12.3 Implement AgentCore rate limit handling
+- [x] 12.3 Implement AgentCore rate limit handling
   - Detect throttling and transient invocation errors
   - Implement bounded exponential backoff for retries
   - Mark execution `FAILED` if retries exhausted (no side effects)
   - **Validates: Requirements 50.6, 50.7**
 
-- [ ] 12.4 Implement confidence bouncer logic
+- [x] 12.4 Implement confidence bouncer logic
   - Implement `shouldAskClarification()` 
   - Low confidence (< 0.7) → always clarify
   - Medium confidence (0.7-0.85) → clarify or default to inbox
   - High confidence (≥ 0.85) → proceed
   - **Validates: Requirements 7, 8**
 
-- [ ] 12.5 Implement clarification prompt generation
+- [x] 12.5 Implement clarification prompt generation
   - Implement `generateClarificationPrompt()`
   - Include detected classification options
   - Ask exactly one question
@@ -403,13 +403,13 @@
 
 ## Task 13: Task Router Component
 
-- [ ] 13.1 Implement task email formatting
+- [x] 13.1 Implement task email formatting
   - Implement `formatTaskEmail()` 
   - Subject = task title (imperative voice)
   - Body = context + Slack source reference
   - **Validates: Requirements 18, 39**
 
-- [ ] 13.2 Implement SES email sending
+- [x] 13.2 Implement SES email sending
   - Implement `sendTaskEmail()` using SES SDK
   - Load OmniFocus Mail Drop address from SSM
   - Return message ID on success
@@ -417,18 +417,18 @@
 
 ## Task 14: Slack Responder Component
 
-- [ ] 14.1 Implement confirmation reply formatting
+- [x] 14.1 Implement confirmation reply formatting
   - Implement `formatConfirmationReply()`
   - Include classification, files changed, commit id
   - Include "reply fix: …" instruction
   - **Validates: Requirements 37.1, 37.2**
 
-- [ ] 14.2 Implement clarification reply formatting
+- [x] 14.2 Implement clarification reply formatting
   - Implement `formatClarificationReply()`
   - Include question and valid options
   - **Validates: Requirements 38.1, 38.2, 38.3**
 
-- [ ] 14.3 Implement Slack Web API integration
+- [x] 14.3 Implement Slack Web API integration
   - Implement `sendSlackReply()` using chat.postMessage
   - Load bot token from SSM
   - Handle API errors
@@ -436,20 +436,20 @@
 
 ## Task 15: Conversation Context Component
 
-- [ ] 15.1 Implement DynamoDB conversation store
+- [x] 15.1 Implement DynamoDB conversation store
   - Implement `get()` to retrieve context by session_id (`{channel_id}#{user_id}`)
   - Implement `set()` to store context with configurable TTL
   - Implement `delete()` to clear context
   - Compute `expires_at` at write time using TTL from SSM
   - **Validates: Requirements 9.1, 9.3, 9.4**
 
-- [ ] 15.2 Implement configurable TTL loading
+- [x] 15.2 Implement configurable TTL loading
   - Load TTL from SSM Parameter Store (`/second-brain/conversation-ttl-seconds`)
   - Default to 3600 seconds (1 hour) if parameter not set
   - Cache TTL value for Lambda invocation lifetime
   - **Validates: Requirements 9.5, 9.6, 9.7**
 
-- [ ] 15.3 Implement context-aware processing
+- [x] 15.3 Implement context-aware processing
   - Check for existing context on new message
   - Resume processing with original + reply context
   - Clear context after successful processing
@@ -457,19 +457,19 @@
 
 ## Task 16: Fix Handler Component
 
-- [ ] 16.1 Implement fix command parsing
+- [x] 16.1 Implement fix command parsing
   - Implement `parseFixCommand()` 
   - Match `fix:` prefix (case-insensitive)
   - Extract instruction text
   - **Validates: Requirements 10.1**
 
-- [ ] 16.2 Implement most recent receipt lookup
+- [x] 16.2 Implement most recent receipt lookup
   - Implement `findMostRecentReceipt()` for user
   - Search receipts.jsonl by user_id
   - Return most recent non-fix receipt
   - **Validates: Requirements 10.2**
 
-- [ ] 16.3 Implement fix application
+- [x] 16.3 Implement fix application
   - Implement `applyFix()` with AgentCore
   - Create new commit with correction
   - Reference prior commit in receipt
@@ -477,28 +477,28 @@
 
 ## Task 17: Markdown Template Generation
 
-- [ ] 17.1 Implement inbox entry template
+- [x] 17.1 Implement inbox entry template
   - Format with date title
   - Chronological bullet entries with timestamps
   - Include classification hints
   - **Validates: Requirements 32.1-32.3**
 
-- [ ] 17.2 Implement idea note template
+- [x] 17.2 Implement idea note template
   - Format with title, context, key points, implications, open questions, source
   - Keep atomic (one idea per file)
   - **Validates: Requirements 33.1, 33.2**
 
-- [ ] 17.3 Implement decision note template
+- [x] 17.3 Implement decision note template
   - Format with decision statement, date, rationale, alternatives, consequences, source
   - Make decision statement explicit
   - **Validates: Requirements 34.1, 34.2**
 
-- [ ] 17.4 Implement project page template
+- [x] 17.4 Implement project page template
   - Format with objective, status, key decisions, next steps, references
   - Link to related decision notes
   - **Validates: Requirements 35.1, 35.2**
 
-- [ ] 17.5 Implement Markdown style enforcement
+- [x] 17.5 Implement Markdown style enforcement
   - Use headings not bold
   - Prefer bullets over prose
   - Use ISO dates
@@ -508,13 +508,13 @@
 
 ## Task 18: Worker Lambda Handler
 
-- [ ] 18.1 Implement Worker Lambda entry point
+- [x] 18.1 Implement Worker Lambda entry point
   - Parse SQS event messages
   - Load system prompt on cold start
   - Wire together all components
   - **Validates: Requirements 3.3, 40.2**
 
-- [ ] 18.2 Implement main processing flow
+- [x] 18.2 Implement main processing flow
   - Check idempotency (DynamoDB conditional write)
   - Invoke AgentCore Runtime via `invoke_agent_runtime()` boto3 call
   - Validate Action Plan against schema
@@ -523,7 +523,7 @@
   - Write receipt to CodeCommit
   - **Validates: Requirements 6, 11, 15, 17, 42-44**
 
-- [ ] 18.3 Implement error handling
+- [x] 18.3 Implement error handling
   - Handle AgentCore errors with retry
   - Handle CodeCommit conflicts with retry
   - Handle SES errors with user notification
@@ -532,14 +532,14 @@
 
 ## Task 19: Observability
 
-- [ ] 19.1 Implement structured logging
+- [x] 19.1 Implement structured logging
   - Log event_id for every processed event
   - Log classification and confidence
   - Log action outcome
   - Log commit_id for successful commits
   - **Validates: Requirements 27.1-27.5**
 
-- [ ] 19.2 Implement PII protection
+- [x] 19.2 Implement PII protection
   - Do not log message content in plain text
   - Do not log email addresses
   - Redact sensitive fields
@@ -547,36 +547,36 @@
 
 ## Task 19: Property-Based Tests
 
-- [ ] 19.1 Write Property 1 test: Signature Verification
+- [x] 19.1 Write Property 1 test: Signature Verification
   - Generate random bodies, timestamps, secrets
   - Verify correct signatures accepted
   - Verify incorrect signatures rejected
   - **Validates: Requirements 1.1, 1.3**
 
-- [ ] 19.2 Write Property 2 test: Timestamp Validation
+- [x] 19.2 Write Property 2 test: Timestamp Validation
   - Generate timestamps within and outside window
   - Verify boundary conditions
   - **Validates: Requirements 1.2, 1.4, 26.1, 26.2**
 
-- [ ] 19.3 Write Property 5 test: Message Filtering
+- [x] 19.3 Write Property 5 test: Message Filtering
   - Generate events with various channel_type, bot_id, subtype combinations
   - Verify only valid DM events pass
   - **Validates: Requirements 4, 5**
 
-- [ ] 19.4 Write Property 6 test: Classification Type Invariant
+- [x] 19.4 Write Property 6 test: Classification Type Invariant
   - Verify classification is always one of valid types
   - **Validates: Requirement 6.1**
 
-- [ ] 19.5 Write Property 7 test: Confidence Bounds Invariant
+- [x] 19.5 Write Property 7 test: Confidence Bounds Invariant
   - Verify confidence is always in [0, 1]
   - **Validates: Requirement 6.2**
 
-- [ ] 19.6 Write Property 11 test: Fix Command Parsing
+- [x] 19.6 Write Property 11 test: Fix Command Parsing
   - Generate messages with and without fix: prefix
   - Verify correct parsing
   - **Validates: Requirement 10.1**
 
-- [ ] 19.7 Write Property 13 test: Classification to Path Mapping
+- [x] 19.7 Write Property 13 test: Classification to Path Mapping
   - Generate classifications with slugs and dates
   - Verify paths match expected patterns
   - **Validates: Requirements 11, 29.3**
@@ -591,7 +591,7 @@
   - Verify at most one commit and email per event_id
   - **Validates: Requirements 19, 20, 22**
 
-- [ ] 19.10 Write Property 22 test: Slug Generation
+- [x] 19.10 Write Property 22 test: Slug Generation
   - Generate text inputs
   - Verify slugs are lowercase, hyphenated, 3-8 words, ASCII only
   - **Validates: Requirements 30**
@@ -622,14 +622,14 @@
 
 ## Task 20: Unit Tests
 
-- [ ] 20.1 Write Slack Ingress unit tests
+- [x] 20.1 Write Slack Ingress unit tests
   - Test valid signature verification
   - Test invalid signature rejection
   - Test URL verification challenge response
   - Test event filtering edge cases
   - **Validates: Requirements 1-5**
 
-- [ ] 20.2 Write Idempotency Guard unit tests
+- [x] 20.2 Write Idempotency Guard unit tests
   - Test lock acquisition success
   - Test duplicate detection
   - Test TTL calculation
@@ -638,25 +638,25 @@
   - Test completed steps tracking
   - **Validates: Requirements 19-22, 24a, 44a, 44b**
 
-- [ ] 20.3 Write Knowledge Store unit tests
+- [x] 20.3 Write Knowledge Store unit tests
   - Test file path generation for each classification
   - Test append-only enforcement
   - Test commit retry on conflict
   - **Validates: Requirements 11-13, 29, 30**
 
-- [ ] 20.4 Write Receipt Logger unit tests
+- [x] 20.4 Write Receipt Logger unit tests
   - Test receipt creation with all fields
   - Test serialization round-trip
   - Test receipt lookup by event_id
   - **Validates: Requirements 15, 16, 36, 45**
 
-- [ ] 20.5 Write Action Plan unit tests
+- [x] 20.5 Write Action Plan unit tests
   - Test valid plan validation
   - Test invalid plan rejection
   - Test LLM output parsing
   - **Validates: Requirements 42, 43**
 
-- [ ] 20.6 Write Template unit tests
+- [x] 20.6 Write Template unit tests
   - Test inbox entry format
   - Test idea note format
   - Test decision note format
@@ -670,13 +670,13 @@
   - Test retry exhaustion marking correct terminal state
   - **Validates: Requirements 50.1-50.7**
 
-- [ ] 20.8 Write Conversation Context TTL unit tests
+- [x] 20.8 Write Conversation Context TTL unit tests
   - Test TTL loading from SSM
   - Test default TTL when parameter not set
   - Test TTL caching behavior
   - **Validates: Requirements 9.5-9.7**
 
-- [ ] 20.9 Write System Prompt Fallback unit tests
+- [x] 20.9 Write System Prompt Fallback unit tests
   - Test fallback to minimal safe prompt on load failure
   - Test error-level logging on fallback
   - Test metrics emission on fallback
@@ -684,7 +684,7 @@
 
 ## Task 21: Integration Tests
 
-- [ ] 21.1 Write end-to-end DM → Commit flow test
+- [x] 21.1 Write end-to-end DM → Commit flow test
   - Simulate DM event
   - Verify classification
   - Verify CodeCommit commit
@@ -692,28 +692,28 @@
   - Verify Slack reply
   - **Validates: Requirements 6, 11, 15, 37**
 
-- [ ] 21.2 Write end-to-end DM → Task flow test
+- [x] 21.2 Write end-to-end DM → Task flow test
   - Simulate task-classified DM
   - Verify OmniFocus email sent
   - Verify receipt creation
   - Verify Slack reply
   - **Validates: Requirements 17, 18, 39**
 
-- [ ] 21.3 Write clarification flow test
+- [x] 21.3 Write clarification flow test
   - Simulate low-confidence classification
   - Verify clarification sent
   - Simulate user reply
   - Verify resumed processing
   - **Validates: Requirements 7, 8, 9**
 
-- [ ] 21.4 Write fix flow test
+- [x] 21.4 Write fix flow test
   - Simulate fix: command
   - Verify prior receipt lookup
   - Verify correction commit
   - Verify new receipt references prior
   - **Validates: Requirement 10**
 
-- [ ] 21.5 Write partial failure recovery flow test
+- [x] 21.5 Write partial failure recovery flow test
   - Simulate commit success followed by SES failure
   - Verify execution marked `PARTIAL_FAILURE`
   - Simulate retry
@@ -721,7 +721,7 @@
   - Verify SES retry attempted
   - **Validates: Requirements 44a, 44b, 44c**
 
-- [ ] 21.6 Write rate limit handling flow test
+- [x] 21.6 Write rate limit handling flow test
   - Simulate Slack 429 response
   - Verify Retry-After honored
   - Verify retry with backoff
@@ -729,17 +729,17 @@
 
 ## Task 22: CDK Tests
 
-- [ ] 22.1 Write Ingress Stack snapshot test
+- [x] 22.1 Write Ingress Stack snapshot test
   - Verify stack synthesizes without errors
   - Verify resource counts
   - **Validates: Requirement 28**
 
-- [ ] 22.2 Write Core Stack snapshot test
+- [x] 22.2 Write Core Stack snapshot test
   - Verify stack synthesizes without errors
   - Verify resource counts
   - **Validates: Requirement 28**
 
-- [ ] 22.3 Write IAM permission assertion tests
+- [x] 22.3 Write IAM permission assertion tests
   - Verify Ingress Lambda has minimal permissions
   - Verify Worker Lambda has required permissions
   - Verify no excessive permissions
@@ -747,14 +747,14 @@
 
 ## Task 23: System Prompt Artifact
 
-- [ ] 23.1 Create system prompt file
+- [x] 23.1 Create system prompt file
   - Create `/system/agent-system-prompt.md` with all required sections
   - Include Role, Core Responsibilities, Hard Constraints
   - Include Classification Rules, Confidence Bouncer
   - Include Output Contract, Forbidden Behaviors
   - **Validates: Requirements 40, 41**
 
-- [ ] 23.2 Bootstrap CodeCommit repository
+- [x] 23.2 Bootstrap CodeCommit repository
   - Create initial commit with system prompt file
   - Create folder structure: `00-inbox/`, `10-ideas/`, `20-decisions/`, `30-projects/`, `90-receipts/`
   - Add `.gitkeep` files to empty folders
@@ -763,13 +763,13 @@
 
 ## Task 24: Deployment and Documentation
 
-- [ ] 24.1 Create deployment scripts
+- [x] 24.1 Create deployment scripts
   - Create `deploy.sh` for CDK deployment
   - Create `setup-ssm.sh` for parameter setup (manual values)
   - Document deployment order (Ingress → Core)
   - **Validates: Requirement 28**
 
-- [ ] 24.2 Create README with setup instructions
+- [x] 24.2 Create README with setup instructions
   - Document Slack app configuration
   - Document SSM parameter setup
   - Document SES email verification

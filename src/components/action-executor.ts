@@ -42,6 +42,7 @@ export interface ExecutorConfig {
   slackBotTokenParam: string;
   mailDropParam: string;
   emailMode: 'live' | 'log';
+  senderEmail: string;
 }
 
 // Execution result
@@ -168,14 +169,20 @@ async function sendTaskEmail(
   config: ExecutorConfig,
   plan: ActionPlan
 ): Promise<string | null> {
-  if (plan.classification !== 'task' || !plan.task_details) {
+  if (plan.classification !== 'task') {
     return null;
   }
 
+  // Construct task_details from plan if missing
+  const taskDetails = plan.task_details || {
+    title: plan.title,
+    context: plan.content || plan.title,
+  };
+
   if (config.emailMode === 'log') {
     console.log('Email mode is log, skipping SES send', {
-      subject: plan.task_details.title,
-      context: plan.task_details.context,
+      subject: taskDetails.title,
+      context: taskDetails.context,
     });
     return 'log-mode-skipped';
   }
@@ -186,18 +193,18 @@ async function sendTaskEmail(
     try {
       const response = await sesClient.send(
         new SendEmailCommand({
-          Source: 'second-brain@example.com', // TODO: Make configurable
+          Source: config.senderEmail,
           Destination: {
             ToAddresses: [mailDropEmail],
           },
           Message: {
             Subject: {
-              Data: plan.task_details.title,
+              Data: taskDetails.title,
               Charset: 'UTF-8',
             },
             Body: {
               Text: {
-                Data: plan.task_details.context || plan.content,
+                Data: taskDetails.context || plan.content,
                 Charset: 'UTF-8',
               },
             },
@@ -293,8 +300,9 @@ function formatConfirmationReply(
   const lines: string[] = [];
 
   if (plan.classification === 'task' && emailSent) {
+    const taskTitle = plan.task_details?.title || plan.title;
     lines.push(`Captured as *${plan.classification}*`);
-    lines.push(`Task sent to OmniFocus: "${plan.task_details?.title}"`);
+    lines.push(`Task sent to OmniFocus: "${taskTitle}"`);
   } else {
     lines.push(`Captured as *${plan.classification}*`);
     

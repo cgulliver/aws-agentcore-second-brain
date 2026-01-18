@@ -44,7 +44,7 @@ export class CoreStack extends cdk.Stack {
   public readonly repository: codecommit.Repository;
 
   /** ECR repository for classifier agent */
-  public readonly ecrRepository: ecr.Repository;
+  public readonly ecrRepository: ecr.IRepository;
 
   /** Worker Lambda function */
   public readonly workerFunction: lambda.Function;
@@ -116,8 +116,20 @@ export class CoreStack extends cdk.Stack {
       },
     });
 
-    // Grant bootstrap function permission to write to CodeCommit
+    // Grant bootstrap function permission to read/write CodeCommit
     this.repository.grantPullPush(bootstrapFunction);
+    // Additional permissions needed for bootstrap (GetBranch, CreateCommit, GetFile)
+    bootstrapFunction.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: [
+          'codecommit:GetBranch',
+          'codecommit:CreateCommit',
+          'codecommit:GetFile',
+        ],
+        resources: [this.repository.repositoryArn],
+      })
+    );
 
     // Custom resource to trigger bootstrap on first deploy
     const bootstrapProvider = new cr.Provider(this, 'BootstrapProvider', {
@@ -140,20 +152,12 @@ export class CoreStack extends cdk.Stack {
     // Task 3.5: ECR Repository for AgentCore Classifier
     // Validates: Requirements 6.3, 28
     // =========================================================================
-    this.ecrRepository = new ecr.Repository(this, 'ClassifierRepository', {
-      repositoryName: 'second-brain-classifier',
-      imageScanOnPush: true,
-      imageTagMutability: ecr.TagMutability.MUTABLE,
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
-      emptyOnDelete: true,
-      lifecycleRules: [
-        {
-          description: 'Keep only last 5 images',
-          maxImageCount: 5,
-          rulePriority: 1,
-        },
-      ],
-    });
+    // Import existing ECR repository (created manually for initial image push)
+    this.ecrRepository = ecr.Repository.fromRepositoryName(
+      this,
+      'ClassifierRepository',
+      'second-brain-classifier'
+    );
 
 
     // =========================================================================
@@ -268,6 +272,23 @@ export class CoreStack extends cdk.Stack {
       inlinePolicies: {
         AgentCorePolicy: new iam.PolicyDocument({
           statements: [
+            // ECR permissions for pulling container image
+            new iam.PolicyStatement({
+              sid: 'ECRAuth',
+              effect: iam.Effect.ALLOW,
+              actions: ['ecr:GetAuthorizationToken'],
+              resources: ['*'],
+            }),
+            new iam.PolicyStatement({
+              sid: 'ECRPull',
+              effect: iam.Effect.ALLOW,
+              actions: [
+                'ecr:BatchGetImage',
+                'ecr:GetDownloadUrlForLayer',
+                'ecr:BatchCheckLayerAvailability',
+              ],
+              resources: [this.ecrRepository.repositoryArn],
+            }),
             // Bedrock model invocation
             new iam.PolicyStatement({
               sid: 'BedrockInvoke',
@@ -380,12 +401,9 @@ export class CoreStack extends cdk.Stack {
     // Validates: Requirements 17, 28, 52
     // =========================================================================
     
-    // Note: SES email identity requires manual verification
-    // For production, exit SES sandbox and verify domain
-    // Non-production can use log-only mode via EMAIL_MODE env var
-    const sesIdentity = new ses.EmailIdentity(this, 'SenderIdentity', {
-      identity: ses.Identity.email('second-brain@example.com'), // Replace with actual sender
-    });
+    // Note: SES email identity is managed outside CDK (verified manually)
+    // The sender email should be configured via context or environment
+    const senderEmail = this.node.tryGetContext('senderEmail') || 'noreply@example.com';
 
     // =========================================================================
     // Task 3.12: SSM Parameter for Conversation Context TTL
@@ -450,7 +468,8 @@ export class CoreStack extends cdk.Stack {
         BOT_TOKEN_PARAM: botTokenParam.parameterName,
         MAILDROP_PARAM: mailDropParam.parameterName,
         CONVERSATION_TTL_PARAM: conversationTtlParam.parameterName,
-        EMAIL_MODE: 'live', // Set to 'log' for non-production
+        SES_FROM_EMAIL: senderEmail,
+        EMAIL_MODE: 'live', // Production mode - emails sent to OmniFocus
         NODE_OPTIONS: '--enable-source-maps',
       },
     });
@@ -475,6 +494,20 @@ export class CoreStack extends cdk.Stack {
 
     // CodeCommit permissions
     this.repository.grantPullPush(this.workerFunction);
+    // Also need GetFile for reading system prompt
+    this.workerFunction.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: [
+          'codecommit:GetFile',
+          'codecommit:GetFolder',
+          'codecommit:GetBranch',
+          'codecommit:CreateCommit',
+          'codecommit:GetCommit',
+        ],
+        resources: [this.repository.repositoryArn],
+      })
+    );
 
     // SSM permissions
     botTokenParam.grantRead(this.workerFunction);
@@ -494,8 +527,28 @@ export class CoreStack extends cdk.Stack {
     this.workerFunction.addToRolePolicy(
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
-        actions: ['bedrock-agentcore:InvokeAgentRuntime'],
-        resources: [agentRuntime.getAtt('AgentRuntimeArn').toString()],
+        actions: [
+          'bedrock-agentcore:InvokeAgentRuntime',
+          'bedrock-agentcore:InvokeAgentRuntimeForUser',
+        ],
+        resources: [
+          agentRuntime.getAtt('AgentRuntimeArn').toString(),
+          `arn:aws:bedrock-agentcore:${this.region}:${this.account}:runtime/*`,
+        ],
+      })
+    );
+
+    // CloudWatch metrics permission
+    this.workerFunction.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['cloudwatch:PutMetricData'],
+        resources: ['*'],
+        conditions: {
+          StringEquals: {
+            'cloudwatch:namespace': 'SecondBrain',
+          },
+        },
       })
     );
 

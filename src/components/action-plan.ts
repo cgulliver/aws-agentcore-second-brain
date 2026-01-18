@@ -116,18 +116,32 @@ export function validateActionPlan(plan: unknown): ValidationResult {
   }
 
   if (!p.content || typeof p.content !== 'string') {
-    errors.push({ field: 'content', message: 'Content is required and must be a string' });
+    // For tasks, content can be derived from title if missing
+    if (p.classification === 'task' && p.title && typeof p.title === 'string') {
+      // Allow missing content for tasks - we'll use title
+    } else {
+      errors.push({ field: 'content', message: 'Content is required and must be a string' });
+    }
   }
 
   // File operations validation
-  if (!Array.isArray(p.file_operations)) {
+  // For tasks, file_operations can be empty or missing (tasks route to email, not files)
+  const classification = p.classification as Classification;
+  const fileOps = p.file_operations;
+  
+  if (classification === 'task') {
+    // Tasks don't require file operations - they route to OmniFocus via email
+    // Allow null, undefined, or empty array
+    if (fileOps !== null && fileOps !== undefined && !Array.isArray(fileOps)) {
+      errors.push({ field: 'file_operations', message: 'File operations must be an array or null for tasks' });
+    }
+  } else if (!Array.isArray(fileOps)) {
     errors.push({ field: 'file_operations', message: 'File operations must be an array' });
   } else {
-    const classification = p.classification as Classification;
     const validPrefixes = VALID_PATH_PREFIXES[classification] || [];
 
-    for (let i = 0; i < p.file_operations.length; i++) {
-      const op = p.file_operations[i] as Record<string, unknown>;
+    for (let i = 0; i < fileOps.length; i++) {
+      const op = fileOps[i] as Record<string, unknown>;
 
       if (!op.operation || !['create', 'append', 'update'].includes(op.operation as string)) {
         errors.push({
@@ -163,18 +177,18 @@ export function validateActionPlan(plan: unknown): ValidationResult {
   }
 
   // Task details validation (required for task classification)
+  // If task_details is missing but we have a title, we can construct it
   if (p.classification === 'task') {
     if (!p.task_details || typeof p.task_details !== 'object') {
-      errors.push({
-        field: 'task_details',
-        message: 'Task details are required for task classification',
-      });
+      // Allow missing task_details - we'll construct from title
+      // This is a soft validation to handle LLM inconsistency
     } else {
       const td = p.task_details as Record<string, unknown>;
       if (!td.title || typeof td.title !== 'string') {
+        // If task_details exists but has no title, that's an error
         errors.push({
           field: 'task_details.title',
-          message: 'Task title is required',
+          message: 'Task title is required when task_details is provided',
         });
       }
     }

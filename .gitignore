@@ -11,6 +11,9 @@ dist/
 cdk.out/
 cdk.context.json
 
+# Kiro IDE specs (development artifacts)
+.kiro/
+
 # IDE
 .idea/
 .vscode/
@@ -32,6 +35,9 @@ npm-debug.log*
 .env
 .env.local
 .env.*.local
+
+# mTLS certificates (download from DigiCert, don't commit)
+certs/*.pem
 
 # Keep source files
 !bin/*.ts

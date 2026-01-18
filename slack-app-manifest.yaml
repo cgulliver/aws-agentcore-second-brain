@@ -1,0 +1,50 @@
+# Second Brain Agent - Slack App Manifest
+#
+# This is a TEMPLATE manifest. Before importing to Slack:
+# 1. Replace YOUR_WEBHOOK_URL with your actual webhook URL
+#
+# Webhook URL depends on your security mode:
+#   - mtls-hmac / mtls-only: https://your-custom-domain.com/slack/events
+#   - hmac-only: Your Lambda Function URL from stack outputs
+#
+# To get your webhook URL after deployment:
+#   aws cloudformation describe-stacks \
+#     --stack-name SecondBrainIngressStack \
+#     --query 'Stacks[0].Outputs[?OutputKey==`WebhookUrl`].OutputValue' \
+#     --output text
+#
+# Import this manifest at: https://api.slack.com/apps → Create New App → From manifest
+
+display_information:
+  name: Second Brain
+  description: Personal knowledge capture - DM me your thoughts, ideas, decisions, and tasks
+  background_color: "#1a1a2e"
+
+features:
+  bot_user:
+    display_name: Second Brain
+    always_online: true
+  app_home:
+    home_tab_enabled: false
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
+
+oauth_config:
+  scopes:
+    bot:
+      - chat:write
+      - im:history
+      - im:read
+      - im:write
+
+settings:
+  event_subscriptions:
+    # REPLACE with your webhook URL after deployment
+    request_url: https://YOUR_WEBHOOK_URL/slack/events
+    bot_events:
+      - message.im
+  interactivity:
+    is_enabled: false
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false
