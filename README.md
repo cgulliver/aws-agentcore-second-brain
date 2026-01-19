@@ -14,7 +14,7 @@ Ideas happen everywhere - in meetings, on walks, in the shower. The friction of 
 Send a message to your Slack bot, and it automatically:
 - **Classifies** your thought (inbox, idea, decision, project, or task)
 - **Stores** it in a Git repository as Markdown
-- **Routes** tasks to OmniFocus via email
+- **Routes** tasks to your task manager via email
 - **Confirms** what it did
 
 No apps to open. No forms to fill. Just message your bot.
@@ -63,8 +63,8 @@ Bot: ✓ Captured as decision
 │      │      │     │                                       │         │
 │      │      │     │  ┌─────────────────┐                  ▼         │
 │  ┌───┴───┐  │     │  │   CodeCommit    │           ┌───────────┐   │
-│  │ Reply │◀─┼─────│  │   (Markdown)    │           │ OmniFocus │   │
-│  └───────┘  │     │  │                 │           └───────────┘   │
+│  │ Reply │◀─┼─────│  │   (Markdown)    │           │Task Manager│   │
+│  └───────┘  │     │  │                 │           │(Mail Drop) │   │
 └─────────────┘     │  │  ┌───────────┐  │                            │
                     │  │  │ 00-inbox  │  │                            │
                     │  │  │ 10-ideas  │  │◀──── git clone ────┐       │
@@ -83,7 +83,7 @@ Bot: ✓ Captured as decision
 3. **Classification** - AgentCore Runtime (Claude) determines intent and category
 4. **Side Effects** - Execute in order with partial failure recovery:
    - Git commit to CodeCommit (ideas, decisions, projects, inbox)
-   - Email via SES (tasks → OmniFocus)
+   - Email via SES (tasks → task manager mail drop)
    - Reply via Slack API (confirmation)
 5. **Learning** - AgentCore Memory stores user preferences from corrections
 
@@ -95,7 +95,7 @@ Bot: ✓ Captured as decision
 | **idea** | Insights, concepts | "What if we cached API responses?" | `10-ideas/YYYY-MM-DD__<slug>__<sb-id>.md` |
 | **decision** | Choices made | "Going with React for the frontend" | `20-decisions/YYYY-MM-DD__<slug>__<sb-id>.md` |
 | **project** | Multi-step work | "Starting the Q2 marketing campaign" | `30-projects/YYYY-MM-DD__<slug>__<sb-id>.md` |
-| **task** | Actionable items | "Need to review the PR today" | OmniFocus (via email) |
+| **task** | Actionable items | "Need to review the PR today" | Task manager (via email) |
 
 Ideas, decisions, and projects include:
 - **SB_ID** - Unique identifier (`sb-a7f3c2d`) for linking between notes
@@ -109,7 +109,7 @@ Ideas, decisions, and projects include:
 - **Fix Command** - Correct mistakes with `fix: change the title to...`
 - **Git-Backed Storage** - Full history, diffable, portable Markdown
 - **Obsidian/Git Sync** - Clone the repo locally for use with Obsidian or any Markdown editor
-- **OmniFocus Integration** - Tasks go straight to your task manager
+- **Task Manager Integration** - Tasks emailed to any mail drop (OmniFocus, Todoist, Things, etc.)
 - **Idempotent Processing** - Safe retries, exactly-once semantics
 - **Partial Failure Recovery** - Resumes from where it left off
 
@@ -173,7 +173,7 @@ I've decided to switch to TypeScript
 ```
 I need to call the dentist tomorrow
 ```
-→ Sends to OmniFocus
+→ Emails to your task manager
 
 ### Fix Mistakes
 
@@ -258,7 +258,7 @@ The modular design makes it easy to extend:
 | `/secondbrain/ingress/security_mode` | Security mode | All |
 | `/second-brain/slack-signing-secret` | Webhook HMAC verification | mtls-hmac, hmac-only |
 | `/second-brain/slack-bot-token` | API authentication | All |
-| `/second-brain/omnifocus-maildrop-email` | Task routing | All |
+| `/second-brain/task-maildrop-email` | Task manager mail drop | All |
 | `/secondbrain/ingress/domain_name` | Custom domain | mtls-hmac, mtls-only |
 | `/secondbrain/ingress/hosted_zone_id` | Route 53 zone | mtls-hmac, mtls-only |
 | `/secondbrain/ingress/acm_cert_arn` | TLS certificate | mtls-hmac, mtls-only |
