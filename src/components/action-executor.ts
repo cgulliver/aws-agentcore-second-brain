@@ -179,12 +179,14 @@ function injectFrontMatter(
 async function executeCodeCommitOperations(
   config: KnowledgeStoreConfig,
   plan: ActionPlan
-): Promise<CommitResult | null> {
+): Promise<{ commit: CommitResult | null; sbId: string | null; filePath: string | null }> {
   if (plan.file_operations.length === 0) {
-    return null;
+    return { commit: null, sbId: null, filePath: null };
   }
 
   let lastCommit: CommitResult | null = null;
+  let generatedSbId: string | null = null;
+  let primaryFilePath: string | null = null;
 
   for (const op of plan.file_operations) {
     const parentCommitId = await getLatestCommitId(config);
@@ -192,12 +194,14 @@ async function executeCodeCommitOperations(
     // Inject front matter for idea/decision/project classifications
     let contentToWrite = op.content;
     if (requiresFrontMatter(plan.classification) && op.operation === 'create') {
-      const { content: contentWithFrontMatter } = injectFrontMatter(
+      const { content: contentWithFrontMatter, sbId } = injectFrontMatter(
         op.content,
         plan.classification,
         plan.title
       );
       contentToWrite = contentWithFrontMatter;
+      generatedSbId = sbId;
+      primaryFilePath = op.path;
     }
 
     if (op.operation === 'append') {
@@ -217,7 +221,7 @@ async function executeCodeCommitOperations(
     }
   }
 
-  return lastCommit;
+  return { commit: lastCommit, sbId: generatedSbId, filePath: primaryFilePath };
 }
 
 /**
@@ -277,6 +281,88 @@ async function sendTaskEmail(
       const err = error as { name?: string; $metadata?: { httpStatusCode?: number }; retryAfterSeconds?: number };
       
       // Check for throttling
+      if (err.name === 'Throttling' || err.$metadata?.httpStatusCode === 429) {
+        if (attempt < MAX_RETRIES - 1) {
+          const delay = calculateBackoff(attempt, err.retryAfterSeconds);
+          console.warn('SES throttled, retrying', { attempt, delay });
+          await sleep(delay);
+          continue;
+        }
+      }
+      throw error;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Send project setup email via SES
+ * 
+ * Creates a task in OmniFocus that can trigger automation to create/link a project.
+ * Email body contains structured metadata for OmniFocus Automation to parse.
+ */
+async function sendProjectEmail(
+  config: ExecutorConfig,
+  plan: ActionPlan,
+  sbId: string,
+  filePath: string
+): Promise<string | null> {
+  if (plan.classification !== 'project') {
+    return null;
+  }
+
+  if (config.emailMode === 'log') {
+    console.log('Email mode is log, skipping project SES send', {
+      subject: `Setup project: ${plan.title}`,
+      sbId,
+      filePath,
+    });
+    return 'log-mode-skipped';
+  }
+
+  const mailDropEmail = await getMailDropEmail(config.mailDropParam);
+
+  // Structured body for OmniFocus Automation to parse
+  const body = `--
+SB_ID: ${sbId}
+Type: project
+File: ${filePath}
+--
+
+${plan.content || plan.title}
+
+---
+This task was auto-generated to create or link an OmniFocus project.
+Use the SB_ID to maintain continuity between knowledge and execution.`;
+
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      const response = await sesClient.send(
+        new SendEmailCommand({
+          Source: config.senderEmail,
+          Destination: {
+            ToAddresses: [mailDropEmail],
+          },
+          Message: {
+            Subject: {
+              Data: `Setup project: ${plan.title}`,
+              Charset: 'UTF-8',
+            },
+            Body: {
+              Text: {
+                Data: body,
+                Charset: 'UTF-8',
+              },
+            },
+          },
+        })
+      );
+
+      return response.MessageId || null;
+    } catch (error: unknown) {
+      const err = error as { name?: string; $metadata?: { httpStatusCode?: number }; retryAfterSeconds?: number };
+      
       if (err.name === 'Throttling' || err.$metadata?.httpStatusCode === 429) {
         if (attempt < MAX_RETRIES - 1) {
           const delay = calculateBackoff(attempt, err.retryAfterSeconds);
@@ -355,7 +441,8 @@ async function sendSlackReply(
 function formatConfirmationReply(
   plan: ActionPlan,
   commitId: string | null,
-  emailSent: boolean
+  emailSent: boolean,
+  projectEmailSent: boolean = false
 ): string {
   const lines: string[] = [];
 
@@ -364,6 +451,24 @@ function formatConfirmationReply(
     lines.push(`Captured as *${plan.classification}*`);
     lines.push(`Task sent to OmniFocus: "${taskTitle}"`);
     // No fix hint for tasks - they're emails, not commits
+  } else if (plan.classification === 'project') {
+    lines.push(`Captured as *${plan.classification}*`);
+    
+    if (plan.file_operations.length > 0) {
+      const files = plan.file_operations.map((op) => op.path).join(', ');
+      lines.push(`Files: ${files}`);
+    }
+
+    if (commitId) {
+      lines.push(`Commit: \`${commitId.substring(0, 7)}\``);
+    }
+
+    if (projectEmailSent) {
+      lines.push(`Project setup task sent to OmniFocus`);
+    }
+
+    lines.push('');
+    lines.push('Reply `fix: <instruction>` to correct.');
   } else {
     lines.push(`Captured as *${plan.classification}*`);
     
@@ -465,7 +570,10 @@ export async function executeActionPlan(
   const priorSteps = await getCompletedSteps(config.idempotency, eventId);
 
   let commitResult: CommitResult | null = null;
+  let generatedSbId: string | null = null;
+  let primaryFilePath: string | null = null;
   let emailMessageId: string | null = null;
+  let projectEmailId: string | null = null;
   let slackReplyTs: string | null = null;
 
   try {
@@ -476,7 +584,10 @@ export async function executeActionPlan(
         codecommit_status: 'IN_PROGRESS',
       });
 
-      commitResult = await executeCodeCommitOperations(config.knowledgeStore, plan);
+      const ccResult = await executeCodeCommitOperations(config.knowledgeStore, plan);
+      commitResult = ccResult.commit;
+      generatedSbId = ccResult.sbId;
+      primaryFilePath = ccResult.filePath;
       completedSteps.codecommit = true;
 
       await updateExecutionState(config.idempotency, eventId, {
@@ -494,7 +605,7 @@ export async function executeActionPlan(
       actions.push({ type: 'commit', status: 'skipped', details: { reason: 'already completed' } });
     }
 
-    // Step 2: SES (if task and not already completed)
+    // Step 2: SES for tasks (if task and not already completed)
     if (plan.classification === 'task' && !priorSteps.ses) {
       await updateExecutionState(config.idempotency, eventId, {
         ses_status: 'IN_PROGRESS',
@@ -512,9 +623,27 @@ export async function executeActionPlan(
         status: 'success',
         details: { messageId: emailMessageId },
       });
-    } else if (plan.classification !== 'task') {
+    } else if (plan.classification === 'project' && generatedSbId && primaryFilePath && !priorSteps.ses) {
+      // Step 2b: SES for projects - send setup task to OmniFocus
+      await updateExecutionState(config.idempotency, eventId, {
+        ses_status: 'IN_PROGRESS',
+      });
+
+      projectEmailId = await sendProjectEmail(config, plan, generatedSbId, primaryFilePath);
       completedSteps.ses = true;
-      actions.push({ type: 'email', status: 'skipped', details: { reason: 'not a task' } });
+
+      await updateExecutionState(config.idempotency, eventId, {
+        ses_status: 'SUCCEEDED',
+      });
+
+      actions.push({
+        type: 'email',
+        status: 'success',
+        details: { messageId: projectEmailId, type: 'project_setup' },
+      });
+    } else if (plan.classification !== 'task' && plan.classification !== 'project') {
+      completedSteps.ses = true;
+      actions.push({ type: 'email', status: 'skipped', details: { reason: 'not a task or project' } });
     } else {
       completedSteps.ses = true;
       actions.push({ type: 'email', status: 'skipped', details: { reason: 'already completed' } });
@@ -529,7 +658,8 @@ export async function executeActionPlan(
       const replyMessage = formatConfirmationReply(
         plan,
         commitResult?.commitId || null,
-        !!emailMessageId
+        !!emailMessageId,
+        !!projectEmailId
       );
       slackReplyTs = await sendSlackReply(config, slackContext, replyMessage);
       completedSteps.slack = true;
