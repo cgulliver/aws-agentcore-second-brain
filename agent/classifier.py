@@ -118,7 +118,7 @@ def validate_action_plan(plan: dict) -> list[str]:
     
     # Check intent (Phase 2) - defaults to 'capture' for backward compatibility
     intent = plan.get('intent', 'capture')
-    valid_intents = ['capture', 'query']
+    valid_intents = ['capture', 'query', 'status_update']
     if intent not in valid_intents:
         errors.append(f"Invalid intent: {intent}. Must be one of: {valid_intents}")
     
@@ -138,6 +138,20 @@ def validate_action_plan(plan: dict) -> list[str]:
         # Just ensure no file_operations are specified
         if plan.get('file_operations') and len(plan.get('file_operations', [])) > 0:
             errors.append("Query intent must not have file_operations")
+        return errors
+    
+    # For status_update intent, validate status update fields
+    if intent == 'status_update':
+        status_update = plan.get('status_update')
+        if not status_update or not isinstance(status_update, dict):
+            errors.append("status_update object is required for status_update intent")
+        else:
+            if not status_update.get('project_reference'):
+                errors.append("status_update.project_reference is required")
+            target_status = status_update.get('target_status')
+            valid_statuses = ['active', 'on-hold', 'complete', 'cancelled']
+            if not target_status or target_status not in valid_statuses:
+                errors.append(f"status_update.target_status must be one of: {valid_statuses}")
         return errors
     
     # For capture intent, validate required fields

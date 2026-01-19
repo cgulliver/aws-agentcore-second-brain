@@ -11,7 +11,7 @@ Send a direct message to your Slack bot. The agent will:
 
 ## Message Classification
 
-The agent classifies messages into five categories:
+The agent classifies messages into six categories:
 
 ### Inbox (Default)
 
@@ -81,6 +81,69 @@ Task: review the pull request before end of day
 ```
 
 **Destination:** OmniFocus via Mail Drop email (includes SB-ID in task notes for linking)
+
+### Status Update
+
+Change the status of an existing project.
+
+**Trigger patterns:** "[project] is complete", "pause [project]", "resume [project]", "cancel [project]"
+
+**Examples:**
+```
+Home automation is complete
+Pause the kitchen renovation
+Resume the website redesign
+```
+
+**Action:** Updates the project file's front matter `status` field
+
+## Project Status Management
+
+Update project status using natural language commands. The system tracks four status values: `active`, `on-hold`, `complete`, and `cancelled`.
+
+### Updating Status
+
+Simply tell the bot about the project's new state:
+
+```
+Home automation is complete
+Pause the kitchen renovation
+Resume the website redesign
+Cancel the Q1 marketing project
+Mark second brain as on-hold
+```
+
+### Status Mappings
+
+| Natural Language | Status Value |
+|-----------------|--------------|
+| "complete", "done", "finished" | `complete` |
+| "pause", "on hold", "paused" | `on-hold` |
+| "resume", "restart", "reactivate" | `active` |
+| "cancel", "close", "drop" | `cancelled` |
+
+### Confirmation
+
+When a status update succeeds:
+```
+Updated Home Automation Dashboard Project (sb-79ccaa5) status to complete
+```
+
+### Project Matching
+
+The system uses fuzzy matching to find the right project. If multiple projects match your reference, it will ask for clarification. If no project is found, you'll see:
+```
+Could not find a project matching "kitchen renovation"
+```
+
+### Querying by Status
+
+Ask about projects by status:
+```
+What projects are active?
+Show me on-hold projects
+Which projects are complete?
+```
 
 ## Task-Project Linking
 
@@ -290,10 +353,26 @@ tags:
 ---
 ```
 
+Projects also include a `status` field:
+
+```yaml
+---
+id: sb-b8e4d3f
+type: project
+title: "Home Automation Dashboard"
+created_at: 2024-01-10T09:00:00Z
+status: active
+tags:
+  - automation
+  - home
+---
+```
+
 This enables:
 - Better search relevance (tag matching)
 - Obsidian compatibility
 - Structured metadata for future tooling
+- Project status tracking and queries
 
 ### Syncing Changes
 

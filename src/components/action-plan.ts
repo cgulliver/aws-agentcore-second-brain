@@ -10,9 +10,19 @@
 import type { Classification } from '../types';
 
 /**
- * Intent type for Phase 2 semantic query support
+ * Intent type for Phase 2 semantic query support and status updates
  */
-export type Intent = 'capture' | 'query';
+export type Intent = 'capture' | 'query' | 'status_update';
+
+/**
+ * Valid project status values
+ */
+export type ProjectStatus = 'active' | 'on-hold' | 'complete' | 'cancelled';
+
+/**
+ * Valid project status values array for validation
+ */
+export const VALID_PROJECT_STATUSES: ProjectStatus[] = ['active', 'on-hold', 'complete', 'cancelled'];
 
 // File operation in Action Plan
 export interface FileOperation {
@@ -33,6 +43,20 @@ export interface LinkedProject {
   sb_id: string;
   title: string;
   confidence: number;
+}
+
+// Status update details for status_update intent
+export interface StatusUpdateDetails {
+  project_reference: string;
+  target_status: ProjectStatus;
+}
+
+// Matched project with current status (for status updates)
+export interface MatchedProject {
+  sb_id: string;
+  title: string;
+  current_status: ProjectStatus;
+  path: string;
 }
 
 // Full Action Plan structure (Phase 2 with intent)
@@ -59,6 +83,10 @@ export interface ActionPlan {
   project_reference?: string | null;
   linked_project?: LinkedProject | null;
   project_candidates?: LinkedProject[];
+  
+  // Status update fields (for status_update intent)
+  status_update?: StatusUpdateDetails;
+  matched_project?: MatchedProject;
 }
 
 // Validation error
@@ -112,7 +140,7 @@ export function validateActionPlan(plan: unknown): ValidationResult {
   const p = plan as Record<string, unknown>;
 
   // Phase 2: Intent validation
-  const validIntents: Intent[] = ['capture', 'query'];
+  const validIntents: Intent[] = ['capture', 'query', 'status_update'];
   if (!p.intent) {
     // Default to capture for backward compatibility
     p.intent = 'capture';
@@ -137,6 +165,7 @@ export function validateActionPlan(plan: unknown): ValidationResult {
   }
 
   const isQueryIntent = p.intent === 'query';
+  const isStatusUpdateIntent = p.intent === 'status_update';
 
   // For query intent, validate query-specific fields
   // Note: query_response and cited_files are populated by the worker after searching,
@@ -148,6 +177,64 @@ export function validateActionPlan(plan: unknown): ValidationResult {
       errors.push({ field: 'file_operations', message: 'File operations must be empty for query intent' });
     }
     // Skip classification validation for query intent
+    return { valid: errors.length === 0, errors };
+  }
+
+  // For status_update intent, validate status update fields
+  if (isStatusUpdateIntent) {
+    // status_update object is required
+    if (!p.status_update || typeof p.status_update !== 'object') {
+      errors.push({ field: 'status_update', message: 'status_update object is required for status_update intent' });
+    } else {
+      const su = p.status_update as Record<string, unknown>;
+      // Validate project_reference
+      if (!su.project_reference || typeof su.project_reference !== 'string' || su.project_reference.length === 0) {
+        errors.push({ field: 'status_update.project_reference', message: 'project_reference is required and must be a non-empty string' });
+      }
+      // Validate target_status
+      if (!su.target_status || typeof su.target_status !== 'string') {
+        errors.push({ field: 'status_update.target_status', message: 'target_status is required' });
+      } else if (!VALID_PROJECT_STATUSES.includes(su.target_status as ProjectStatus)) {
+        errors.push({ 
+          field: 'status_update.target_status', 
+          message: `target_status must be one of: ${VALID_PROJECT_STATUSES.join(', ')}` 
+        });
+      }
+    }
+    
+    // Validate matched_project if present (populated by worker after matching)
+    if (p.matched_project !== undefined && p.matched_project !== null) {
+      const mp = p.matched_project as Record<string, unknown>;
+      if (typeof mp !== 'object') {
+        errors.push({ field: 'matched_project', message: 'matched_project must be an object' });
+      } else {
+        // Validate sb_id format
+        if (!mp.sb_id || typeof mp.sb_id !== 'string') {
+          errors.push({ field: 'matched_project.sb_id', message: 'sb_id is required and must be a string' });
+        } else if (!/^sb-[a-f0-9]{7}$/.test(mp.sb_id as string)) {
+          errors.push({ field: 'matched_project.sb_id', message: 'sb_id must match format sb-[a-f0-9]{7}' });
+        }
+        // Validate title
+        if (!mp.title || typeof mp.title !== 'string') {
+          errors.push({ field: 'matched_project.title', message: 'title is required and must be a string' });
+        }
+        // Validate current_status
+        if (mp.current_status !== undefined && mp.current_status !== null) {
+          if (!VALID_PROJECT_STATUSES.includes(mp.current_status as ProjectStatus)) {
+            errors.push({ 
+              field: 'matched_project.current_status', 
+              message: `current_status must be one of: ${VALID_PROJECT_STATUSES.join(', ')}` 
+            });
+          }
+        }
+        // Validate path
+        if (!mp.path || typeof mp.path !== 'string') {
+          errors.push({ field: 'matched_project.path', message: 'path is required and must be a string' });
+        }
+      }
+    }
+    
+    // Skip classification validation for status_update intent
     return { valid: errors.length === 0, errors };
   }
 

@@ -109,7 +109,7 @@ describe('Integration Tests', () => {
     process.env.CONVERSATION_TABLE = 'conversation-table';
     process.env.AGENT_RUNTIME_ARN = 'arn:aws:bedrock-agentcore:us-east-1:123456789:agent-runtime/test-runtime';
     process.env.BOT_TOKEN_PARAM = '/second-brain/slack-bot-token';
-    process.env.MAILDROP_PARAM = '/second-brain/maildrop-email';
+    process.env.MAILDROP_PARAM = '/second-brain/omnifocus-maildrop-email';
     process.env.CONVERSATION_TTL_PARAM = '/second-brain/conversation-ttl-seconds';
     process.env.AWS_REGION = 'us-east-1';
   });

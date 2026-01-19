@@ -178,42 +178,65 @@ function containsWords(reference: string, target: string): boolean {
 }
 
 /**
+ * Normalize string for comparison - removes spaces and special chars
+ */
+function normalizeForComparison(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+/**
  * Score how well a project matches a reference
  * 
  * Validates: Requirements 2.3, 2.4
  * 
  * Scoring weights:
- * - Title match: 0.6 (highest weight)
- * - Tag match: 0.25
- * - Content match: 0.15
+ * - Title match: 0.7 (highest weight)
+ * - Tag match: 0.2
+ * - Content match: 0.1
  */
 export function scoreProjectMatch(project: ProjectMetadata, reference: string): number {
   const refLower = reference.toLowerCase();
   const titleLower = project.title.toLowerCase();
   
+  // Normalized versions (no spaces/special chars) for fuzzy matching
+  const refNorm = normalizeForComparison(reference);
+  const titleNorm = normalizeForComparison(project.title);
+  
   let score = 0;
   
-  // Title similarity (highest weight: 0.6)
+  // Title similarity (highest weight: 0.7)
   const titleSimilarity = calculateSimilarity(reference, project.title);
   
-  // Bonus for exact substring match in title
-  const titleContainsRef = titleLower.includes(refLower) || containsWords(reference, project.title);
-  const titleBonus = titleContainsRef ? 0.3 : 0;
+  // Strong bonus for exact substring match in title (reference appears in title)
+  const titleContainsRef = titleLower.includes(refLower);
+  // Also check normalized version (handles "second brain" vs "secondbrain")
+  const titleContainsRefNorm = titleNorm.includes(refNorm);
+  // Weaker bonus for word overlap
+  const hasWordOverlap = containsWords(reference, project.title);
   
-  score += Math.min(0.6, (titleSimilarity * 0.6) + titleBonus);
+  // If the reference is a substring of the title, give high score
+  if (titleContainsRef || titleContainsRefNorm) {
+    score += 0.7; // Full title weight for substring match
+  } else if (hasWordOverlap) {
+    score += Math.min(0.5, (titleSimilarity * 0.7) + 0.2);
+  } else {
+    score += titleSimilarity * 0.5;
+  }
   
-  // Tag matches (weight: 0.25)
+  // Tag matches (weight: 0.2)
   const tagMatches = project.tags.filter(tag => {
     const tagLower = tag.toLowerCase();
+    const tagNorm = normalizeForComparison(tag);
     return refLower.includes(tagLower) || tagLower.includes(refLower) || 
+           refNorm.includes(tagNorm) || tagNorm.includes(refNorm) ||
            calculateSimilarity(reference, tag) > 0.5;
   });
-  const tagScore = Math.min(0.25, (tagMatches.length / Math.max(1, project.tags.length)) * 0.25);
+  const tagScore = Math.min(0.2, (tagMatches.length / Math.max(1, project.tags.length)) * 0.2);
   score += tagScore;
   
-  // Content relevance (weight: 0.15)
+  // Content relevance (weight: 0.1)
   const contentSimilarity = calculateSimilarity(reference, project.content.substring(0, 500));
-  score += contentSimilarity * 0.15;
+  score += contentSimilarity * 0.1;
   
   return Math.min(1, score);
 }

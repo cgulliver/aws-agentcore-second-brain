@@ -2,7 +2,7 @@
 
 > A personal knowledge capture system that turns Slack DMs into organized notes, decisions, and tasks.
 
-[![Tests](https://img.shields.io/badge/tests-321%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-377%20passing-brightgreen)]()
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue)]()
 [![AWS CDK](https://img.shields.io/badge/AWS%20CDK-2.x-orange)]()
 [![License](https://img.shields.io/badge/license-MIT-green)]()
@@ -157,6 +157,8 @@ Ideas, decisions, and projects include:
 - **Git-Backed Storage** - Full history, diffable, portable Markdown
 - **Obsidian/Git Sync** - Clone the repo locally for use with Obsidian or any Markdown editor
 - **Task Manager Integration** - Tasks emailed to any mail drop (OmniFocus, Todoist, Things, etc.)
+- **Task-Project Linking** - Automatically link tasks to projects via natural language
+- **Project Status Management** - Update project status via Slack ("pause project X", "mark Y complete")
 - **Idempotent Processing** - Safe retries, exactly-once semantics
 - **Partial Failure Recovery** - Resumes from where it left off
 

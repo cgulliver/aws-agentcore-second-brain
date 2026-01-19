@@ -192,3 +192,34 @@ export {
   type QueryConfig,
   type QueryResult,
 } from './query-handler';
+
+// Project Status Updater
+export {
+  parseFrontMatter,
+  serializeFrontMatter,
+  isValidProjectStatus,
+  updateProjectStatus,
+  type ProjectStatusUpdaterConfig,
+  type StatusUpdateResult,
+  type ParsedFrontMatter,
+} from './project-status-updater';
+
+// Task Logger
+export {
+  formatTaskLogEntry,
+  ensureTasksSection,
+  appendTaskToSection,
+  appendTaskLog,
+  type TaskLoggerConfig,
+  type TaskLogEntry,
+  type TaskLogResult,
+} from './task-logger';
+
+// Status Intent Detector
+export {
+  mapNaturalLanguageToStatus,
+  detectStatusUpdateIntent,
+  extractStatusUpdate,
+  getTermsForStatus,
+  getSupportedPatterns,
+} from './status-intent-detector';

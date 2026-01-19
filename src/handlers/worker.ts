@@ -1,5 +1,5 @@
 /**
- * Worker Lambda Handler (v2)
+ * Worker Lambda Handler (v2.1)
  * 
  * Processes Slack events from SQS:
  * - Idempotency check (DynamoDB)
@@ -77,7 +77,17 @@ import {
   generateNoResultsResponse,
   formatQuerySlackReply,
   validateResponseCitations,
+  queryProjectsByStatus,
+  formatProjectQueryForSlack,
 } from '../components/query-handler';
+import {
+  updateProjectStatus,
+} from '../components/project-status-updater';
+import type { ProjectStatus } from '../components/action-plan';
+import {
+  appendTaskLog,
+} from '../components/task-logger';
+import type { ProjectStatus } from '../components/action-plan';
 import { log, redactPII } from './logging';
 import { createHash } from 'crypto';
 
@@ -87,7 +97,7 @@ const IDEMPOTENCY_TABLE = process.env.IDEMPOTENCY_TABLE!;
 const CONVERSATION_TABLE = process.env.CONVERSATION_TABLE!;
 const AGENT_RUNTIME_ARN = process.env.AGENT_RUNTIME_ARN!;
 const BOT_TOKEN_PARAM = process.env.BOT_TOKEN_PARAM || '/second-brain/slack-bot-token';
-const MAILDROP_PARAM = process.env.MAILDROP_PARAM || '/second-brain/maildrop-email';
+const MAILDROP_PARAM = process.env.MAILDROP_PARAM || '/second-brain/omnifocus-maildrop-email';
 const CONVERSATION_TTL_PARAM = process.env.CONVERSATION_TTL_PARAM || '/second-brain/conversation-ttl-seconds';
 const SES_FROM_EMAIL = process.env.SES_FROM_EMAIL || 'noreply@example.com';
 const EMAIL_MODE = process.env.EMAIL_MODE || 'live';
@@ -246,6 +256,12 @@ async function processMessage(message: SQSEventMessage): Promise<void> {
     // Step 6.5: Check for query intent (Phase 2)
     if (actionPlan.intent === 'query') {
       await handleQueryIntent(event_id, slackContext, message_text, actionPlan, systemPrompt);
+      return;
+    }
+
+    // Step 6.6: Check for status_update intent
+    if (actionPlan.intent === 'status_update' && actionPlan.status_update) {
+      await handleStatusUpdate(event_id, slackContext, actionPlan);
       return;
     }
 
@@ -505,6 +521,122 @@ async function handleValidationFailure(
 }
 
 /**
+ * Detect if a query is asking about projects by status
+ * Returns the status being queried, or null if not a status query
+ */
+function detectProjectStatusQuery(queryText: string): ProjectStatus | null {
+  const text = queryText.toLowerCase();
+  
+  // Patterns for status queries
+  const patterns: Array<{ pattern: RegExp; status: ProjectStatus }> = [
+    { pattern: /(?:show|list|what|which).*(?:active|current)\s*projects?/i, status: 'active' },
+    { pattern: /(?:show|list|what|which).*(?:on-hold|on hold|paused)\s*projects?/i, status: 'on-hold' },
+    { pattern: /(?:show|list|what|which).*(?:complete|completed|done|finished)\s*projects?/i, status: 'complete' },
+    { pattern: /(?:show|list|what|which).*(?:cancelled|canceled|dropped)\s*projects?/i, status: 'cancelled' },
+    { pattern: /projects?\s+(?:that\s+)?(?:are\s+)?active/i, status: 'active' },
+    { pattern: /projects?\s+(?:that\s+)?(?:are\s+)?(?:on-hold|on hold|paused)/i, status: 'on-hold' },
+    { pattern: /projects?\s+(?:that\s+)?(?:are\s+)?(?:complete|completed|done)/i, status: 'complete' },
+    { pattern: /projects?\s+(?:that\s+)?(?:are\s+)?(?:cancelled|canceled)/i, status: 'cancelled' },
+  ];
+  
+  for (const { pattern, status } of patterns) {
+    if (pattern.test(text)) {
+      return status;
+    }
+  }
+  
+  return null;
+}
+
+/**
+ * Handle project status query
+ */
+async function handleProjectStatusQuery(
+  eventId: string,
+  slackContext: SlackContext,
+  status: ProjectStatus,
+  actionPlan: ActionPlan
+): Promise<void> {
+  log('info', 'Processing project status query', {
+    event_id: eventId,
+    status,
+  });
+
+  try {
+    // Search the knowledge base for project files
+    const searchConfig: KnowledgeSearchConfig = {
+      repositoryName: REPOSITORY_NAME,
+      branchName: 'main',
+      maxFilesToSearch: 50,
+      maxExcerptLength: 500,
+    };
+
+    const { CodeCommitClient } = await import('@aws-sdk/client-codecommit');
+    const codecommitClient = new CodeCommitClient({ region: AWS_REGION });
+    
+    const searchResult = await searchKnowledgeBase(codecommitClient, searchConfig);
+
+    // Filter projects by status
+    const queryResult = queryProjectsByStatus(searchResult.files, status);
+
+    // Format response
+    const responseText = formatProjectQueryForSlack(queryResult, status);
+
+    await sendSlackReply(
+      { botTokenParam: BOT_TOKEN_PARAM },
+      {
+        channel: slackContext.channel_id,
+        text: responseText,
+        thread_ts: slackContext.thread_ts,
+      }
+    );
+
+    // Create receipt
+    const receipt = createReceipt(
+      eventId,
+      slackContext,
+      'query',
+      actionPlan.intent_confidence,
+      [{ type: 'slack_reply', status: 'success', details: { type: 'project_status_query' } }],
+      queryResult.projects.map(p => p.path),
+      null,
+      `Project status query: ${status}`,
+      {
+        status,
+        projectsFound: queryResult.totalCount,
+      }
+    );
+
+    await appendReceipt(knowledgeConfig, receipt);
+    await markCompleted(idempotencyConfig, eventId);
+
+    log('info', 'Project status query completed', {
+      event_id: eventId,
+      status,
+      projects_found: queryResult.totalCount,
+    });
+
+  } catch (error) {
+    log('error', 'Project status query failed', {
+      event_id: eventId,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+
+    await sendSlackReply(
+      { botTokenParam: BOT_TOKEN_PARAM },
+      {
+        channel: slackContext.channel_id,
+        text: formatErrorReply('Failed to query projects. Please try again.'),
+        thread_ts: slackContext.thread_ts,
+      }
+    );
+
+    await markFailed(idempotencyConfig, eventId, error instanceof Error ? error.message : 'Query failed');
+    throw error;
+  }
+}
+
+/**
  * Handle query intent (Phase 2)
  * 
  * Validates: Requirements 53.2, 53.3, 54, 55, 56
@@ -524,6 +656,14 @@ async function handleQueryIntent(
   await updateExecutionState(idempotencyConfig, eventId, { status: 'EXECUTING' });
 
   try {
+    // Check if this is a project status query
+    const statusQueryMatch = detectProjectStatusQuery(queryText);
+    
+    if (statusQueryMatch) {
+      await handleProjectStatusQuery(eventId, slackContext, statusQueryMatch, actionPlan);
+      return;
+    }
+
     // Search the knowledge base
     const searchConfig: KnowledgeSearchConfig = {
       repositoryName: REPOSITORY_NAME,
@@ -638,6 +778,148 @@ async function handleQueryIntent(
 }
 
 /**
+ * Handle status update intent
+ * 
+ * Validates: Requirements 3.3, 3.5, 4.1, 8.1, 8.2, 8.3
+ */
+async function handleStatusUpdate(
+  eventId: string,
+  slackContext: SlackContext,
+  actionPlan: ActionPlan
+): Promise<void> {
+  log('info', 'Processing status update intent', {
+    event_id: eventId,
+    project_reference: actionPlan.status_update?.project_reference,
+    target_status: actionPlan.status_update?.target_status,
+  });
+
+  await updateExecutionState(idempotencyConfig, eventId, { status: 'EXECUTING' });
+
+  const statusUpdate = actionPlan.status_update!;
+
+  try {
+    // Find matching project
+    const matchResult = await findMatchingProject(
+      projectMatcherConfig,
+      statusUpdate.project_reference
+    );
+
+    log('info', 'Project match result for status update', {
+      event_id: eventId,
+      searched_count: matchResult.searchedCount,
+      best_match: matchResult.bestMatch?.sbId,
+      best_confidence: matchResult.bestMatch?.confidence,
+    });
+
+    // Check if we have a confident match (>= 0.7 for auto-update)
+    if (!matchResult.bestMatch || matchResult.bestMatch.confidence < projectMatcherConfig.autoLinkConfidence) {
+      // No confident match found
+      const errorMessage = matchResult.bestMatch
+        ? `Found "${matchResult.bestMatch.title}" but confidence too low (${(matchResult.bestMatch.confidence * 100).toFixed(0)}%). Please be more specific.`
+        : `Could not find a project matching "${statusUpdate.project_reference}"`;
+
+      await sendSlackReply(
+        { botTokenParam: BOT_TOKEN_PARAM },
+        {
+          channel: slackContext.channel_id,
+          text: formatErrorReply(errorMessage),
+          thread_ts: slackContext.thread_ts,
+        }
+      );
+
+      await markFailed(idempotencyConfig, eventId, errorMessage);
+      return;
+    }
+
+    // Update the project status
+    const updateResult = await updateProjectStatus(
+      knowledgeConfig,
+      matchResult.bestMatch.path,
+      statusUpdate.target_status,
+      matchResult.bestMatch.title
+    );
+
+    if (!updateResult.success) {
+      await sendSlackReply(
+        { botTokenParam: BOT_TOKEN_PARAM },
+        {
+          channel: slackContext.channel_id,
+          text: formatErrorReply(updateResult.error || 'Failed to update project status'),
+          thread_ts: slackContext.thread_ts,
+        }
+      );
+
+      await markFailed(idempotencyConfig, eventId, updateResult.error || 'Status update failed');
+      return;
+    }
+
+    // Send confirmation - different message if status was already set
+    const alreadySet = updateResult.previousStatus === updateResult.newStatus;
+    const confirmationText = alreadySet
+      ? `${matchResult.bestMatch.title} (${matchResult.bestMatch.sbId}) is already ${statusUpdate.target_status}`
+      : `Updated ${matchResult.bestMatch.title} (${matchResult.bestMatch.sbId}) status to ${statusUpdate.target_status}`;
+
+    await sendSlackReply(
+      { botTokenParam: BOT_TOKEN_PARAM },
+      {
+        channel: slackContext.channel_id,
+        text: confirmationText,
+        thread_ts: slackContext.thread_ts,
+      }
+    );
+
+    // Create receipt for status update
+    const receipt = createReceipt(
+      eventId,
+      slackContext,
+      'status_update' as Classification, // Extended classification
+      actionPlan.intent_confidence,
+      [
+        { type: 'commit', status: 'success', details: { commitId: updateResult.commitId } },
+        { type: 'slack_reply', status: 'success', details: { type: 'status_confirmation' } },
+      ],
+      [matchResult.bestMatch.path],
+      updateResult.commitId || null,
+      confirmationText,
+      {
+        projectSbId: matchResult.bestMatch.sbId,
+        previousStatus: updateResult.previousStatus,
+        newStatus: updateResult.newStatus,
+      }
+    );
+
+    await appendReceipt(knowledgeConfig, receipt);
+    await markCompleted(idempotencyConfig, eventId, updateResult.commitId);
+
+    log('info', 'Status update completed', {
+      event_id: eventId,
+      project_sb_id: matchResult.bestMatch.sbId,
+      previous_status: updateResult.previousStatus,
+      new_status: updateResult.newStatus,
+      commit_id: updateResult.commitId,
+    });
+
+  } catch (error) {
+    log('error', 'Status update failed', {
+      event_id: eventId,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+
+    await sendSlackReply(
+      { botTokenParam: BOT_TOKEN_PARAM },
+      {
+        channel: slackContext.channel_id,
+        text: formatErrorReply('Failed to update project status. Please try again.'),
+        thread_ts: slackContext.thread_ts,
+      }
+    );
+
+    await markFailed(idempotencyConfig, eventId, error instanceof Error ? error.message : 'Status update failed');
+    throw error;
+  }
+}
+
+/**
  * Execute action plan and finalize
  */
 async function executeAndFinalize(
@@ -715,6 +997,49 @@ async function executeAndFinalize(
     slackContext,
     { commitId: systemPrompt.metadata.commitId, sha256: systemPrompt.metadata.sha256, loadedAt: new Date().toISOString() }
   );
+
+  // Task logging: If task was linked to a project, log it in the project file
+  if (result.success && actionPlan.classification === 'task' && actionPlan.linked_project) {
+    try {
+      const taskTitle = actionPlan.task_details?.title || actionPlan.title || 'Untitled task';
+      const today = new Date().toISOString().split('T')[0];
+      
+      // Find the project path from the match
+      const matchResult = await findMatchingProject(
+        projectMatcherConfig,
+        actionPlan.linked_project.title
+      );
+      
+      if (matchResult.bestMatch) {
+        const logResult = await appendTaskLog(
+          knowledgeConfig,
+          matchResult.bestMatch.path,
+          { date: today, title: taskTitle }
+        );
+        
+        if (logResult.success) {
+          log('info', 'Task logged to project', {
+            event_id: eventId,
+            project_sb_id: actionPlan.linked_project.sb_id,
+            task_title: taskTitle,
+            commit_id: logResult.commitId,
+          });
+        } else {
+          log('warn', 'Failed to log task to project', {
+            event_id: eventId,
+            project_sb_id: actionPlan.linked_project.sb_id,
+            error: logResult.error,
+          });
+        }
+      }
+    } catch (error) {
+      // Log but don't fail - task logging is supplementary
+      log('warn', 'Task logging failed', {
+        event_id: eventId,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  }
 
   if (result.success) {
     await markCompleted(idempotencyConfig, eventId, result.commitId, result.receiptCommitId);

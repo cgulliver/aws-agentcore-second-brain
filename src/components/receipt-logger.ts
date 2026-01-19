@@ -35,7 +35,7 @@ export interface Receipt {
   timestamp_iso: string;
   event_id: string;
   slack: SlackContext;
-  classification: Classification | 'fix' | 'clarify' | 'query';
+  classification: Classification | 'fix' | 'clarify' | 'query' | 'status_update';
   confidence: number;
   actions: ReceiptAction[];
   files: string[];
@@ -45,6 +45,10 @@ export interface Receipt {
   prompt_commit_id?: string;
   prompt_sha256?: string;
   validation_errors?: string[];
+  // Status update metadata
+  project_sb_id?: string;
+  previous_status?: string;
+  new_status?: string;
 }
 
 // Receipt file path
@@ -58,7 +62,7 @@ const RECEIPTS_FILE = '90-receipts/receipts.jsonl';
 export function createReceipt(
   eventId: string,
   slackContext: SlackContext,
-  classification: Classification | 'fix' | 'clarify' | 'query',
+  classification: Classification | 'fix' | 'clarify' | 'query' | 'status_update',
   confidence: number,
   actions: ReceiptAction[],
   files: string[],
@@ -72,6 +76,10 @@ export function createReceipt(
     queryHash?: string;
     filesSearched?: number;
     filesCited?: number;
+    // Status update metadata
+    projectSbId?: string;
+    previousStatus?: string;
+    newStatus?: string;
   }
 ): Receipt {
   return {
@@ -88,6 +96,9 @@ export function createReceipt(
     prompt_commit_id: options?.promptCommitId,
     prompt_sha256: options?.promptSha256,
     validation_errors: options?.validationErrors,
+    project_sb_id: options?.projectSbId,
+    previous_status: options?.previousStatus,
+    new_status: options?.newStatus,
   };
 }
 

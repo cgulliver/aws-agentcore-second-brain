@@ -32,6 +32,7 @@ export interface FrontMatter {
   title: string;        // Human-readable title
   created_at: string;   // ISO-8601 timestamp
   tags: string[];       // 2-4 extracted tags
+  status?: 'active' | 'on-hold' | 'complete' | 'cancelled'; // Project status (projects only)
 }
 
 // Inbox entry structure
@@ -112,6 +113,12 @@ export function generateFrontMatter(frontMatter: FrontMatter): string {
   lines.push(`id: ${frontMatter.id}`);
   lines.push(`type: ${frontMatter.type}`);
   lines.push(`title: "${frontMatter.title.replace(/"/g, '\\"')}"`);
+  
+  // Add status for projects (default to 'active')
+  if (frontMatter.type === 'project') {
+    lines.push(`status: ${frontMatter.status || 'active'}`);
+  }
+  
   lines.push(`created_at: ${frontMatter.created_at}`);
   
   if (frontMatter.tags.length > 0) {

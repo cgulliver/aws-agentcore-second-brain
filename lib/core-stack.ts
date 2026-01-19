@@ -527,7 +527,7 @@ export class CoreStack extends cdk.Stack {
         SES_FROM_EMAIL: senderEmail,
         EMAIL_MODE: 'live', // Production mode - emails sent to OmniFocus
         NODE_OPTIONS: '--enable-source-maps',
-        DEPLOY_VERSION: '3', // Force Lambda update
+        DEPLOY_VERSION: '6', // Add project status query filtering
       },
     });
 

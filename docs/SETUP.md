@@ -31,7 +31,7 @@ aws --version
 npm install -g aws-cdk
 cdk --version
 
-# Docker or Finch (for container builds)
+# Container runtime (Docker or Finch)
 docker --version  # or: finch --version
 ```
 
