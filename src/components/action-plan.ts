@@ -28,6 +28,13 @@ export interface TaskDetails {
   due_date?: string;
 }
 
+// Linked project for task-project linking
+export interface LinkedProject {
+  sb_id: string;
+  title: string;
+  confidence: number;
+}
+
 // Full Action Plan structure (Phase 2 with intent)
 export interface ActionPlan {
   // Phase 2: Intent classification
@@ -47,6 +54,11 @@ export interface ActionPlan {
   // Phase 2: Query response fields
   query_response?: string;
   cited_files?: string[];
+  
+  // Task-project linking (optional, only for tasks)
+  project_reference?: string | null;
+  linked_project?: LinkedProject | null;
+  project_candidates?: LinkedProject[];
 }
 
 // Validation error
@@ -247,6 +259,61 @@ export function validateActionPlan(plan: unknown): ValidationResult {
           message: 'Task title is required when task_details is provided',
         });
       }
+    }
+  }
+
+  // Task-project linking validation (optional fields)
+  // Validate linked_project structure when present
+  if (p.linked_project !== undefined && p.linked_project !== null) {
+    const lp = p.linked_project as Record<string, unknown>;
+    if (typeof lp !== 'object') {
+      errors.push({ field: 'linked_project', message: 'linked_project must be an object' });
+    } else {
+      // Validate sb_id format
+      if (!lp.sb_id || typeof lp.sb_id !== 'string') {
+        errors.push({ field: 'linked_project.sb_id', message: 'sb_id is required and must be a string' });
+      } else if (!/^sb-[a-f0-9]{7}$/.test(lp.sb_id as string)) {
+        errors.push({ field: 'linked_project.sb_id', message: 'sb_id must match format sb-[a-f0-9]{7}' });
+      }
+      // Validate title
+      if (!lp.title || typeof lp.title !== 'string') {
+        errors.push({ field: 'linked_project.title', message: 'title is required and must be a string' });
+      }
+      // Validate confidence
+      if (lp.confidence === undefined || lp.confidence === null) {
+        errors.push({ field: 'linked_project.confidence', message: 'confidence is required' });
+      } else {
+        const conf = Number(lp.confidence);
+        if (isNaN(conf) || conf < 0 || conf > 1) {
+          errors.push({ field: 'linked_project.confidence', message: 'confidence must be between 0 and 1' });
+        }
+      }
+    }
+  }
+
+  // Validate project_candidates array structure when present
+  if (p.project_candidates !== undefined && p.project_candidates !== null) {
+    if (!Array.isArray(p.project_candidates)) {
+      errors.push({ field: 'project_candidates', message: 'project_candidates must be an array' });
+    } else if (p.project_candidates.length > 3) {
+      errors.push({ field: 'project_candidates', message: 'project_candidates must have at most 3 items' });
+    } else {
+      for (let i = 0; i < p.project_candidates.length; i++) {
+        const cand = p.project_candidates[i] as Record<string, unknown>;
+        if (!cand.sb_id || typeof cand.sb_id !== 'string') {
+          errors.push({ field: `project_candidates[${i}].sb_id`, message: 'sb_id is required' });
+        }
+        if (!cand.title || typeof cand.title !== 'string') {
+          errors.push({ field: `project_candidates[${i}].title`, message: 'title is required' });
+        }
+      }
+    }
+  }
+
+  // Validate project_reference when present
+  if (p.project_reference !== undefined && p.project_reference !== null) {
+    if (typeof p.project_reference !== 'string' || p.project_reference.length === 0) {
+      errors.push({ field: 'project_reference', message: 'project_reference must be a non-empty string when present' });
     }
   }
 

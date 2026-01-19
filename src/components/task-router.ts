@@ -40,6 +40,7 @@ export interface SlackSource {
 export interface TaskEmailOptions {
   sbId?: string;
   repoPath?: string;
+  projectSbId?: string;  // Linked project SB_ID for task-project linking
 }
 
 // AWS clients
@@ -134,6 +135,14 @@ export function formatTaskEmail(
     if (options.repoPath) {
       bodyLines.push(`SB-Repo-Path: ${options.repoPath}`);
     }
+  }
+  
+  // Task-project linking (Validates: Requirements 6.1, 6.2)
+  if (options?.projectSbId) {
+    bodyLines.push(`SB-Project: ${options.projectSbId}`);
+  }
+  
+  if (options?.sbId || options?.projectSbId) {
     bodyLines.push('');
   }
   

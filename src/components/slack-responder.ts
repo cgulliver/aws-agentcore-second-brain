@@ -215,3 +215,18 @@ export async function sendSlackReply(
 export function clearBotTokenCache(): void {
   cachedBotToken = null;
 }
+
+/**
+ * Format task confirmation with optional project link
+ * 
+ * Validates: Requirements 7.1, 7.2, 7.3 (task-project-linking)
+ */
+export function formatTaskConfirmation(
+  taskTitle: string,
+  linkedProject?: { title: string; sbId: string }
+): string {
+  if (linkedProject) {
+    return `Task sent to OmniFocus, linked to project: ${linkedProject.title} (${linkedProject.sbId})`;
+  }
+  return `Task sent to OmniFocus: "${taskTitle}"`;
+}

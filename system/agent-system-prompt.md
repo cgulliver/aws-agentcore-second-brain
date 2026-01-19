@@ -93,6 +93,35 @@ When intent is unclear, default to `capture`. It's safer to capture something th
 - Routed to OmniFocus via email (no file created)
 - Must have imperative voice title
 
+## Project Reference Detection (Tasks Only)
+
+When classifying a message as `task`, also check if it references an existing project.
+
+### Detection Rules
+- Look for phrases like "for [project]", "add to [project]", "[project] project:"
+- Look for "for the [project name]", "[task] for [project]"
+- Extract the project name/description for matching
+- Include in Action Plan as `project_reference` field
+
+### Examples
+- "Task for home automation project: Research protocols" → `project_reference: "home automation"`
+- "I need to test Alexa integration for voice input" → `project_reference: "voice input"`
+- "Research smart home protocols for the home automation dashboard" → `project_reference: "home automation dashboard"`
+- "Add to second brain project: implement fix command" → `project_reference: "second brain"`
+- "Buy groceries" → `project_reference: null` (no project reference)
+
+### Action Plan Extension for Tasks
+When a task has a project reference, include:
+```json
+{
+  "classification": "task",
+  "project_reference": "extracted project name",
+  ...
+}
+```
+
+If no project reference is detected, omit the `project_reference` field or set it to null.
+
 ## File Path Generation (CRITICAL)
 
 You MUST generate file paths that EXACTLY match the classification:

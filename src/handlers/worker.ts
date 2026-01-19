@@ -62,6 +62,10 @@ import {
   applyFix,
   canApplyFix,
 } from '../components/fix-handler';
+import {
+  findMatchingProject,
+  type ProjectMatcherConfig,
+} from '../components/project-matcher';
 import type { KnowledgeStoreConfig } from '../components/knowledge-store';
 import {
   searchKnowledgeBase,
@@ -114,6 +118,15 @@ const systemPromptConfig: SystemPromptConfig = {
   repositoryName: REPOSITORY_NAME,
   branchName: 'main',
   promptPath: 'system/agent-system-prompt.md',
+};
+
+// Project matcher configuration
+const projectMatcherConfig: ProjectMatcherConfig = {
+  repositoryName: REPOSITORY_NAME,
+  branchName: 'main',
+  minConfidence: 0.5,
+  autoLinkConfidence: 0.7,
+  maxCandidates: 3,
 };
 
 // Cached system prompt
@@ -635,6 +648,54 @@ async function executeAndFinalize(
 ): Promise<void> {
   await updateExecutionState(idempotencyConfig, eventId, { status: 'EXECUTING' });
 
+  // Task-project linking: Check for project reference in task classification
+  if (actionPlan.classification === 'task' && actionPlan.project_reference) {
+    log('info', 'Task has project reference, searching for match', {
+      event_id: eventId,
+      project_reference: actionPlan.project_reference,
+    });
+
+    try {
+      const matchResult = await findMatchingProject(
+        projectMatcherConfig,
+        actionPlan.project_reference
+      );
+
+      log('info', 'Project match result', {
+        event_id: eventId,
+        searched_count: matchResult.searchedCount,
+        best_match: matchResult.bestMatch?.sbId,
+        best_confidence: matchResult.bestMatch?.confidence,
+        candidates_count: matchResult.candidates.length,
+      });
+
+      if (matchResult.bestMatch && matchResult.bestMatch.confidence >= projectMatcherConfig.autoLinkConfidence) {
+        // Auto-link: single clear match
+        actionPlan.linked_project = {
+          sb_id: matchResult.bestMatch.sbId,
+          title: matchResult.bestMatch.title,
+          confidence: matchResult.bestMatch.confidence,
+        };
+      } else if (matchResult.candidates.length > 1) {
+        // Multiple candidates: store for potential clarification (future enhancement)
+        // For now, just use the best candidate if above min threshold
+        if (matchResult.candidates[0] && matchResult.candidates[0].confidence >= projectMatcherConfig.minConfidence) {
+          actionPlan.linked_project = {
+            sb_id: matchResult.candidates[0].sbId,
+            title: matchResult.candidates[0].title,
+            confidence: matchResult.candidates[0].confidence,
+          };
+        }
+      }
+    } catch (error) {
+      // Log but don't fail - project linking is optional
+      log('warn', 'Project matching failed', {
+        event_id: eventId,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  }
+
   // Build executor config
   const executorConfig: ExecutorConfig = {
     knowledgeStore: knowledgeConfig,
@@ -661,6 +722,7 @@ async function executeAndFinalize(
       event_id: eventId,
       classification: actionPlan.classification,
       commit_id: result.commitId,
+      linked_project: actionPlan.linked_project?.sb_id,
     });
   } else {
     log('warn', 'Execution failed', {

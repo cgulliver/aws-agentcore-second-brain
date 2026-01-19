@@ -247,11 +247,30 @@ async function sendTaskEmail(
     console.log('Email mode is log, skipping SES send', {
       subject: taskDetails.title,
       context: taskDetails.context,
+      linkedProject: plan.linked_project?.sb_id,
     });
     return 'log-mode-skipped';
   }
 
   const mailDropEmail = await getMailDropEmail(config.mailDropParam);
+
+  // Build email body with optional project link
+  const bodyLines: string[] = [];
+  if (taskDetails.context) {
+    bodyLines.push(taskDetails.context);
+    bodyLines.push('');
+  }
+  bodyLines.push('---');
+  
+  // Add project link if present (task-project linking)
+  if (plan.linked_project?.sb_id) {
+    bodyLines.push(`SB-Project: ${plan.linked_project.sb_id}`);
+  }
+  
+  bodyLines.push('SB-Source: maildrop');
+  bodyLines.push(`Source: Slack DM`);
+
+  const emailBody = bodyLines.join('\n');
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
@@ -268,7 +287,7 @@ async function sendTaskEmail(
             },
             Body: {
               Text: {
-                Data: taskDetails.context || plan.content,
+                Data: emailBody,
                 Charset: 'UTF-8',
               },
             },
@@ -449,7 +468,13 @@ function formatConfirmationReply(
   if (plan.classification === 'task' && emailSent) {
     const taskTitle = plan.task_details?.title || plan.title;
     lines.push(`Captured as *${plan.classification}*`);
-    lines.push(`Task sent to OmniFocus: "${taskTitle}"`);
+    
+    // Show linked project if present
+    if (plan.linked_project) {
+      lines.push(`Task sent to OmniFocus, linked to project: ${plan.linked_project.title} (${plan.linked_project.sb_id})`);
+    } else {
+      lines.push(`Task sent to OmniFocus: "${taskTitle}"`);
+    }
     // No fix hint for tasks - they're emails, not commits
   } else if (plan.classification === 'project') {
     lines.push(`Captured as *${plan.classification}*`);
