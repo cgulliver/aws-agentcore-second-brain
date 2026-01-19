@@ -265,6 +265,11 @@ export class CoreStack extends cdk.Stack {
     // Validates: Requirements 6.3, 28
     // =========================================================================
 
+    // Classifier Model Selection
+    // Default: Nova Micro (~$0.035/1M input) - 99% cheaper than Claude Sonnet 4
+    // Options: amazon.nova-micro-v1:0, amazon.nova-lite-v1:0, anthropic.claude-3-5-haiku-20241022-v1:0
+    const classifierModel = this.node.tryGetContext('classifierModel') || 'amazon.nova-micro-v1:0';
+
     // IAM role for AgentCore execution
     const agentCoreRole = new iam.Role(this, 'AgentCoreRole', {
       assumedBy: new iam.ServicePrincipal('bedrock-agentcore.amazonaws.com'),
@@ -383,6 +388,7 @@ export class CoreStack extends cdk.Stack {
           KNOWLEDGE_REPO_NAME: this.repository.repositoryName,
           AWS_DEFAULT_REGION: this.region,
           MEMORY_ID: agentMemory.getAtt('MemoryId').toString(),
+          MODEL_ID: classifierModel,
         },
       },
     });
@@ -644,6 +650,11 @@ export class CoreStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'WorkerFunctionArn', {
       value: this.workerFunction.functionArn,
       description: 'Worker Lambda Function ARN',
+    });
+
+    new cdk.CfnOutput(this, 'ClassifierModelId', {
+      value: classifierModel,
+      description: 'Bedrock model ID used for classification',
     });
   }
 }

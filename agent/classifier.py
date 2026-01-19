@@ -11,6 +11,7 @@ Validates: Requirements 6.3, 42.1, 58.1, 58.2
 import json
 import os
 from strands import Agent
+from strands.models import BedrockModel
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
 
 # AgentCore Memory integration (Task 25.1)
@@ -33,6 +34,7 @@ app = BedrockAgentCoreApp()
 KNOWLEDGE_REPO_NAME = os.getenv('KNOWLEDGE_REPO_NAME', 'second-brain-knowledge')
 AWS_REGION = os.getenv('AWS_DEFAULT_REGION', 'us-east-1')
 MEMORY_ID = os.getenv('MEMORY_ID', '')  # Task 31.2: Memory ID from CDK
+MODEL_ID = os.getenv('MODEL_ID', 'amazon.nova-micro-v1:0')  # Configurable model
 
 
 def create_session_manager(user_id: str, session_id: str):
@@ -91,7 +93,14 @@ def create_classifier_agent(system_prompt: str, session_manager=None) -> Agent:
     Returns:
         Configured Strands Agent
     """
+    # Configure Bedrock model with parameterized model ID
+    model = BedrockModel(
+        model_id=MODEL_ID,
+        region_name=AWS_REGION,
+    )
+    
     agent_kwargs = {
+        'model': model,
         'system_prompt': system_prompt,
         'name': 'SecondBrainClassifier',
     }

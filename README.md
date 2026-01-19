@@ -256,6 +256,28 @@ Bot: ✓ Captured as idea...
 |-----|-------------|---------|
 | `senderEmail` | SES sender address | `noreply@example.com` |
 | `securityMode` | Ingress security mode | `mtls-hmac` |
+| `classifierModel` | Bedrock model for classification | `amazon.nova-micro-v1:0` |
+
+### Model Selection
+
+The classifier model can be configured at deploy time for cost/capability tradeoffs:
+
+```bash
+# Use default (Nova Micro - cheapest)
+npx cdk deploy SecondBrainCoreStack
+
+# Use Claude Haiku (better quality, higher cost)
+npx cdk deploy SecondBrainCoreStack -c classifierModel=anthropic.claude-3-5-haiku-20241022-v1:0
+
+# Use Nova Lite (balanced)
+npx cdk deploy SecondBrainCoreStack -c classifierModel=amazon.nova-lite-v1:0
+```
+
+| Model | Model ID | Input/1M | Output/1M | Notes |
+|-------|----------|----------|-----------|-------|
+| Nova Micro | `amazon.nova-micro-v1:0` | $0.035 | $0.14 | Default, fastest, cheapest |
+| Nova Lite | `amazon.nova-lite-v1:0` | $0.06 | $0.24 | Good balance |
+| Claude 3.5 Haiku | `anthropic.claude-3-5-haiku-20241022-v1:0` | $0.80 | $4.00 | Best quality |
 
 ### Environment Variables
 
@@ -316,9 +338,11 @@ For personal use (~100 messages/day):
 | DynamoDB | ~$0 (free tier) |
 | SQS | ~$0 (free tier) |
 | CodeCommit | ~$0 (free tier) |
-| AgentCore/Bedrock | ~$5-10 |
+| AgentCore/Bedrock (Nova Micro) | ~$0.50 |
 | SES | ~$0.10 |
-| **Total** | **~$5-10/month** |
+| **Total** | **~$1/month** |
+
+*Using default Nova Micro model. Claude Haiku would be ~$5-10/month.*
 
 ## Contributing
 
