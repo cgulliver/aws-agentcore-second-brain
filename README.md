@@ -66,12 +66,14 @@ These layers connect through a single canonical identifier (**SB_ID**) which pro
 
 Task completion lives in your task manager (OmniFocus), not in the knowledge repo. When you complete a task in OmniFocus, the knowledge repo doesn't change - and that's intentional.
 
-For projects in the knowledge repo:
-- Update status manually via Obsidian, Working Copy, or any git client
-- Or capture a decision via Slack: "I've decided to close the kitchen renovation project - it's done"
+For projects in the knowledge repo, update status via Slack:
+- "Project update: Kitchen renovation is complete"
+- "Decision: closing the home automation project - achieved the goals"
 - The repo tracks *what you thought and decided*, not *what got done*
 
-Manual edits to the repo are encouraged - clone it, edit in Obsidian, push changes. The automation only appends; it won't overwrite your manual updates. This separation means you can rebuild your task manager from scratch without losing knowledge, and your knowledge base stays clean of transient execution state.
+**Single writer model:** All repo updates flow through Slack. Obsidian and other git clients are read-only viewers. This avoids merge conflicts and keeps the automation as the single source of writes. If you need to edit something, use the `fix:` command or send a new message.
+
+This separation means you can rebuild your task manager from scratch without losing knowledge, and your knowledge base stays clean of transient execution state.
 
 ## Demo
 
@@ -239,7 +241,7 @@ Bot: ✓ Captured as idea...
 
 ### Sync with Obsidian
 
-The knowledge repository is a standard Git repo. Clone it locally to browse, search, and edit with Obsidian or any Markdown tool:
+The knowledge repository is a standard Git repo. Clone it locally to browse and search with Obsidian or any Markdown tool:
 
 ```bash
 # Clone the knowledge repo (requires git-remote-codecommit)
@@ -250,7 +252,7 @@ git clone codecommit::<region>://second-brain-knowledge ~/SecondBrain
 # Point Obsidian to ~/SecondBrain
 ```
 
-Your notes sync both ways - edits in Obsidian can be pushed back, and new captures from Slack appear on pull.
+Pull regularly to see new captures from Slack. Obsidian is read-only - all updates flow through Slack to avoid merge conflicts.
 
 ## Architecture
 
