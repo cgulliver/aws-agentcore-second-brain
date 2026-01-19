@@ -154,6 +154,7 @@ Ideas, decisions, and projects include:
 - AWS CDK CLI (`npm install -g aws-cdk`)
 - AWS CLI configured
 - Slack workspace (admin access)
+- (Optional) OmniFocus with Mail Drop configured for task routing
 
 ### Deploy
 
