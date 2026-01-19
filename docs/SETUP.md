@@ -141,8 +141,8 @@ cdk bootstrap aws://ACCOUNT-ID/REGION
 
 1. Go to AWS Console → Amazon Bedrock
 2. Navigate to Model access
-3. Request access to Claude models (Anthropic)
-4. Wait for approval (usually instant)
+3. Request access to your chosen models (Nova Micro is default, Claude Haiku optional)
+4. Wait for approval (usually instant for Amazon models)
 
 ### 4. (mTLS modes) Domain Setup
 

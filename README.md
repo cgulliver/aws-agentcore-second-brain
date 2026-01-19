@@ -68,11 +68,11 @@ These layers connect through a single canonical identifier (**SB_ID**) which pro
 You: I've decided to use PostgreSQL for the new project because of 
      better JSON support and our team's familiarity with it.
 
-Bot: ✓ Captured as decision
-     File: 20-decisions/2024-01-15-use-postgresql.md
+Bot: Captured as decision
+     Files: 20-decisions/2024-01-15__use-postgresql__sb-a1b2c3d.md
      Commit: a1b2c3d
      
-     Reply "fix: <instruction>" to make changes.
+     Reply "fix: <instruction>" to correct.
 ```
 
 ## How It Works
@@ -294,7 +294,7 @@ The modular design makes it easy to extend:
 | `/secondbrain/ingress/security_mode` | Security mode | All |
 | `/second-brain/slack-signing-secret` | Webhook HMAC verification | mtls-hmac, hmac-only |
 | `/second-brain/slack-bot-token` | API authentication | All |
-| `/second-brain/task-maildrop-email` | Task manager mail drop | All |
+| `/second-brain/omnifocus-maildrop-email` | Task manager mail drop | All |
 | `/secondbrain/ingress/domain_name` | Custom domain | mtls-hmac, mtls-only |
 | `/secondbrain/ingress/hosted_zone_id` | Route 53 zone | mtls-hmac, mtls-only |
 | `/secondbrain/ingress/acm_cert_arn` | TLS certificate | mtls-hmac, mtls-only |
