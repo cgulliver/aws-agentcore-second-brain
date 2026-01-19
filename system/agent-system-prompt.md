@@ -92,10 +92,19 @@ When intent is unclear, default to `capture`. It's safer to capture something th
 - Actionable items with clear next action
 - Routed to OmniFocus via email (no file created)
 - Must have imperative voice title
+- **IMPORTANT**: Messages starting with "Task:", "Task for", "Add task:", or containing "task:" are ALWAYS tasks
+- Messages with explicit project references like "for [project]:" are tasks
 
 ## Project Reference Detection (Tasks Only)
 
 When classifying a message as `task`, also check if it references an existing project.
+
+### Task Classification Override
+**CRITICAL**: The following patterns ALWAYS indicate a task, regardless of content:
+- "Task for [project]: ..." → classification: task
+- "Task: ..." → classification: task  
+- "Add to [project]: ..." → classification: task
+- "[project] task: ..." → classification: task
 
 ### Detection Rules
 - Look for phrases like "for [project]", "add to [project]", "[project] project:"
@@ -103,12 +112,12 @@ When classifying a message as `task`, also check if it references an existing pr
 - Extract the project name/description for matching
 - Include in Action Plan as `project_reference` field
 
-### Examples
-- "Task for home automation project: Research protocols" → `project_reference: "home automation"`
-- "I need to test Alexa integration for voice input" → `project_reference: "voice input"`
-- "Research smart home protocols for the home automation dashboard" → `project_reference: "home automation dashboard"`
-- "Add to second brain project: implement fix command" → `project_reference: "second brain"`
-- "Buy groceries" → `project_reference: null` (no project reference)
+### Examples (ALL are tasks)
+- "Task for home automation dashboard: Research protocols" → classification: task, project_reference: "home automation dashboard"
+- "Task: Buy groceries" → classification: task, project_reference: null
+- "Add to second brain project: implement fix command" → classification: task, project_reference: "second brain"
+- "home automation task: Set up dev environment" → classification: task, project_reference: "home automation"
+- "Research smart home protocols for the home automation dashboard" → classification: task, project_reference: "home automation dashboard"
 
 ### Action Plan Extension for Tasks
 When a task has a project reference, include:
