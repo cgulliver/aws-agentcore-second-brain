@@ -19,14 +19,30 @@ Send a message to your Slack bot, and it automatically:
 
 No apps to open. No forms to fill. Just message your bot.
 
+## Philosophy
+
+This system separates **knowledge** from **execution** by design:
+
+| Knowledge Store (Git) | Execution Layer (Task Manager) |
+|-----------------------|-------------------------------|
+| Notes, specs, decisions, artifacts | Tasks, due dates, priorities |
+| Versioned, diffable, long-lived | Optimized for "what to do next" |
+| Source of truth for understanding | Considered disposable, re-creatable |
+
+These layers connect through a single canonical identifier (**SB_ID**) which provides continuity without coupling. Execution state doesn't live in Git. Knowledge artifacts don't depend on task state.
+
+**Design mantra:** *Capture now. Link reliably. Decide intentionally.*
+
 ## Principles
 
-- **Zero Friction** - Capture should be as easy as sending a text message
+- **Neutral Capture** - Items captured without premature classification; human judgment applied during review
+- **One Canonical ID** - Each durable item gets an immutable SB_ID used across all tools
+- **Durable Knowledge** - Notes, specs, and decisions live in Git and evolve over time
+- **Execution Isolation** - Task management concerns remain outside the repository
+- **Minimal Automation** - The system handles plumbing and consistency, not meaning
 - **Plain Text** - Markdown files in Git, not locked in a proprietary database
 - **Own Your Data** - Everything lives in your AWS account, clone it anytime
 - **Serverless** - Pay only for what you use, scales to zero when idle
-- **Modular** - Swap components (storage, task manager, classifier) without rewriting
-- **Extensible** - Add new classifications, integrations, or workflows
 
 ## Demo
 
