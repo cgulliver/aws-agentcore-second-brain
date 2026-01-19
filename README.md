@@ -26,10 +26,11 @@ This system separates **knowledge** from **execution** by design:
 | Knowledge Store (Git) | Execution Layer (Task Manager) |
 |-----------------------|-------------------------------|
 | Notes, specs, decisions, artifacts | Tasks, due dates, priorities |
+| Projects as context and goals | Projects as task containers |
 | Versioned, diffable, long-lived | Optimized for "what to do next" |
 | Source of truth for understanding | Considered disposable, re-creatable |
 
-These layers connect through a single canonical identifier (**SB_ID**) which provides continuity without coupling. Execution state doesn't live in Git. Knowledge artifacts don't depend on task state.
+These layers connect through a single canonical identifier (**SB_ID**) which provides continuity without coupling. Execution state doesn't live in Git. Knowledge artifacts don't depend on task state. Tasks reference knowledge projects via SB_ID for context, but the two project concepts remain independent.
 
 **What this repository is:**
 - A memory and knowledge store
