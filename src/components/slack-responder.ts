@@ -80,6 +80,7 @@ export function formatConfirmationReply(
     } else {
       lines.push('Task sent to OmniFocus');
     }
+    // No fix hint for tasks - they're emails, not commits
   } else if (classification === 'fix') {
     lines.push('Fix applied successfully');
     if (files.length > 0) {
@@ -88,6 +89,8 @@ export function formatConfirmationReply(
     if (commitId) {
       lines.push(`Commit: \`${commitId.substring(0, 7)}\``);
     }
+    lines.push('');
+    lines.push('Reply `fix: <instruction>` to correct.');
   } else {
     lines.push(`Captured as *${classification}*`);
 
@@ -98,10 +101,10 @@ export function formatConfirmationReply(
     if (commitId) {
       lines.push(`Commit: \`${commitId.substring(0, 7)}\``);
     }
-  }
 
-  lines.push('');
-  lines.push('Reply `fix: <instruction>` to correct.');
+    lines.push('');
+    lines.push('Reply `fix: <instruction>` to correct.');
+  }
 
   return lines.join('\n');
 }

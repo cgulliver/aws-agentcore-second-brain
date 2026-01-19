@@ -363,6 +363,7 @@ function formatConfirmationReply(
     const taskTitle = plan.task_details?.title || plan.title;
     lines.push(`Captured as *${plan.classification}*`);
     lines.push(`Task sent to OmniFocus: "${taskTitle}"`);
+    // No fix hint for tasks - they're emails, not commits
   } else {
     lines.push(`Captured as *${plan.classification}*`);
     
@@ -374,10 +375,10 @@ function formatConfirmationReply(
     if (commitId) {
       lines.push(`Commit: \`${commitId.substring(0, 7)}\``);
     }
-  }
 
-  lines.push('');
-  lines.push('Reply `fix: <instruction>` to correct.');
+    lines.push('');
+    lines.push('Reply `fix: <instruction>` to correct.');
+  }
 
   return lines.join('\n');
 }
