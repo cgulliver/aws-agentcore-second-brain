@@ -39,7 +39,7 @@ These layers connect through a single canonical identifier (**SB_ID**) which pro
 - **One Canonical ID** - Each durable item gets an immutable SB_ID used across all tools
 - **Durable Knowledge** - Notes, specs, and decisions live in Git and evolve over time
 - **Execution Isolation** - Task management concerns remain outside the repository
-- **Minimal Automation** - The system handles plumbing and consistency, not meaning
+- **Minimal Automation** - The system handles plumbing and consistency, not meaning (yet)
 - **Plain Text** - Markdown files in Git, not locked in a proprietary database
 - **Own Your Data** - Everything lives in your AWS account, clone it anytime
 - **Serverless** - Pay only for what you use, scales to zero when idle
