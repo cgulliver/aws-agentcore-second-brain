@@ -61,22 +61,24 @@ export interface ValidationResult {
   errors: ValidationError[];
 }
 
-// Valid classifications
-const VALID_CLASSIFICATIONS: Classification[] = [
+// Valid classifications (including 'fix' for fix commands)
+const VALID_CLASSIFICATIONS: string[] = [
   'inbox',
   'idea',
   'decision',
   'project',
   'task',
+  'fix',
 ];
 
 // Valid file path prefixes by classification
-const VALID_PATH_PREFIXES: Record<Classification, string[]> = {
+const VALID_PATH_PREFIXES: Record<string, string[]> = {
   inbox: ['00-inbox/'],
   idea: ['10-ideas/'],
   decision: ['20-decisions/'],
   project: ['30-projects/'],
   task: ['00-inbox/'], // Tasks may also log to inbox
+  fix: ['00-inbox/', '10-ideas/', '20-decisions/', '30-projects/'], // Fix can update any file
 };
 
 /**
