@@ -9,7 +9,7 @@
 
 import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses';
 import { SSMClient, GetParameterCommand } from '@aws-sdk/client-ssm';
-import type { ActionPlan, ValidationResult } from './action-plan';
+import type { ActionPlan } from './action-plan';
 import { validateActionPlan } from './action-plan';
 import {
   writeFile,
@@ -28,11 +28,14 @@ import {
 import {
   createReceipt,
   appendReceipt,
-  type Receipt,
   type ReceiptAction,
   type SlackContext,
 } from './receipt-logger';
 import type { SystemPromptMetadata } from './system-prompt-loader';
+import { generateSbId } from './sb-id';
+import { generateFrontMatter, type FrontMatter } from './markdown-templates';
+import { extractTags } from './tag-extractor';
+import type { Classification } from '../types';
 
 // Execution configuration
 export interface ExecutorConfig {
@@ -123,6 +126,52 @@ async function getMailDropEmail(paramName: string): Promise<string> {
 }
 
 /**
+ * Check if classification requires front matter
+ */
+function requiresFrontMatter(classification: Classification | null): classification is 'idea' | 'decision' | 'project' {
+  return classification === 'idea' || classification === 'decision' || classification === 'project';
+}
+
+/**
+ * Inject front matter into content for idea/decision/project
+ * 
+ * Validates: Requirements 2.1, 2.2, 2.3, 2.5
+ */
+function injectFrontMatter(
+  content: string,
+  classification: 'idea' | 'decision' | 'project',
+  title: string
+): { content: string; sbId: string } {
+  // Generate unique SB_ID
+  const sbId = generateSbId();
+  
+  // Extract tags from content
+  const tags = extractTags(content, title);
+  
+  // Build front matter
+  const frontMatter: FrontMatter = {
+    id: sbId,
+    type: classification,
+    title: title,
+    created_at: new Date().toISOString(),
+    tags,
+  };
+  
+  // Generate front matter string and prepend to content
+  const frontMatterStr = generateFrontMatter(frontMatter);
+  
+  // Check if content already has front matter (shouldn't, but be safe)
+  if (content.startsWith('---\n')) {
+    return { content, sbId };
+  }
+  
+  return {
+    content: frontMatterStr + content,
+    sbId,
+  };
+}
+
+/**
  * Execute CodeCommit file operations
  * 
  * Validates: Requirements 44.1, 44a.3
@@ -139,18 +188,29 @@ async function executeCodeCommitOperations(
 
   for (const op of plan.file_operations) {
     const parentCommitId = await getLatestCommitId(config);
+    
+    // Inject front matter for idea/decision/project classifications
+    let contentToWrite = op.content;
+    if (requiresFrontMatter(plan.classification) && op.operation === 'create') {
+      const { content: contentWithFrontMatter } = injectFrontMatter(
+        op.content,
+        plan.classification,
+        plan.title
+      );
+      contentToWrite = contentWithFrontMatter;
+    }
 
     if (op.operation === 'append') {
       lastCommit = await appendToFile(
         config,
         op.path,
-        op.content,
+        contentToWrite,
         `${plan.classification}: ${plan.title}`
       );
     } else {
       lastCommit = await writeFile(
         config,
-        { path: op.path, content: op.content, mode: op.operation },
+        { path: op.path, content: contentToWrite, mode: op.operation },
         `${plan.classification}: ${plan.title}`,
         parentCommitId
       );

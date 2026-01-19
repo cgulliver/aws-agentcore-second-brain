@@ -126,26 +126,12 @@ Every durable item (idea, decision, project) MUST be assigned a canonical identi
 
 ## Front Matter Requirements
 
-All markdown files for ideas, decisions, and projects MUST include YAML front matter:
+**IMPORTANT:** Do NOT generate YAML front matter in your content. The system will automatically add front matter with:
+- A unique SB_ID (e.g., `sb-a7f3c2d`)
+- Type, title, created_at timestamp
+- Auto-extracted tags
 
-```yaml
----
-id: <SB_ID>
-type: idea|decision|project
-title: "<Title>"
-created_at: <ISO-8601>
-tags:
-  - <tag1>
-  - <tag2>
----
-```
-
-**Field Requirements:**
-- `id`: Required. The SB_ID for this item.
-- `type`: Required. One of: idea, decision, project.
-- `title`: Required. Human-readable title (quoted if contains special chars).
-- `created_at`: Required. ISO-8601 timestamp.
-- `tags`: Required. Array of 2-4 lowercase hyphenated tags extracted from content.
+Just generate the markdown body content starting with the title heading.
 
 **Note:** Inbox entries do NOT have front matter (append-only daily log).
 
@@ -236,16 +222,6 @@ When generating a query response:
 
 ### Template: Idea Note
 ```markdown
----
-id: <SB_ID>
-type: idea
-title: "<Title>"
-created_at: <ISO-8601>
-tags:
-  - <tag1>
-  - <tag2>
----
-
 # <Title>
 
 ## Context
@@ -267,16 +243,6 @@ Source: Slack DM from <user> on YYYY-MM-DD
 
 ### Template: Decision Note
 ```markdown
----
-id: <SB_ID>
-type: decision
-title: "<Decision Statement>"
-created_at: <ISO-8601>
-tags:
-  - <tag1>
-  - <tag2>
----
-
 # Decision: <Decision Statement>
 
 Date: YYYY-MM-DD
@@ -296,16 +262,6 @@ Source: Slack DM from <user> on YYYY-MM-DD
 
 ### Template: Project Page
 ```markdown
----
-id: <SB_ID>
-type: project
-title: "<Project Name>"
-created_at: <ISO-8601>
-tags:
-  - <tag1>
-  - <tag2>
----
-
 # <Project Name>
 
 ## Objective

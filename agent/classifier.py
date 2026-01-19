@@ -151,12 +151,10 @@ def validate_action_plan(plan: dict) -> list[str]:
         except (TypeError, ValueError):
             errors.append(f"Invalid confidence value: {plan['confidence']}")
     
-    # Validate front matter in content for idea/decision/project (Task 11.2)
-    classification = plan.get('classification')
-    content = plan.get('content', '')
-    if classification in ['idea', 'decision', 'project'] and content:
-        fm_errors = validate_front_matter(content, classification)
-        errors.extend(fm_errors)
+    # Note: Front matter validation removed from classifier (Task 11.2 revision)
+    # The TypeScript side generates proper SB_IDs and front matter.
+    # LLMs cannot reliably generate random hex values for SB_IDs.
+    # The classifier focuses on classification; the worker adds front matter.
     
     return errors
 
