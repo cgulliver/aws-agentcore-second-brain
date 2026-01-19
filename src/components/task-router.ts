@@ -36,6 +36,12 @@ export interface SlackSource {
   messageTs: string;
 }
 
+// Options for task email formatting
+export interface TaskEmailOptions {
+  sbId?: string;
+  repoPath?: string;
+}
+
 // AWS clients
 const sesClient = new SESClient({});
 const ssmClient = new SSMClient({});
@@ -69,7 +75,7 @@ async function getMailDropEmail(paramName: string): Promise<string> {
 /**
  * Format task email for OmniFocus Mail Drop
  * 
- * Validates: Requirements 18, 39
+ * Validates: Requirements 18, 39, 7.1, 7.2
  * 
  * OmniFocus Mail Drop format:
  * - Subject becomes task title
@@ -77,11 +83,17 @@ async function getMailDropEmail(paramName: string): Promise<string> {
  * - Can include :: for project assignment
  * - Can include # for tags
  * - Can include // for due date
+ * 
+ * SB_ID Integration (R-MAILDROP-02, R-MAILDROP-04):
+ * - Required: SB-ID: <SB_ID>
+ * - Optional: SB-Source: maildrop
+ * - Optional: SB-Repo-Path: <path>
  */
 export function formatTaskEmail(
   taskTitle: string,
   context: string,
-  slackSource: SlackSource
+  slackSource: SlackSource,
+  options?: TaskEmailOptions
 ): TaskEmail {
   // Ensure title is in imperative voice (basic check)
   let title = taskTitle.trim();
@@ -114,6 +126,17 @@ export function formatTaskEmail(
   }
 
   bodyLines.push('---');
+  
+  // SB_ID integration (Validates: Requirements 7.1, 7.2)
+  if (options?.sbId) {
+    bodyLines.push(`SB-ID: ${options.sbId}`);
+    bodyLines.push('SB-Source: maildrop');
+    if (options.repoPath) {
+      bodyLines.push(`SB-Repo-Path: ${options.repoPath}`);
+    }
+    bodyLines.push('');
+  }
+  
   bodyLines.push(`Source: Slack DM`);
   bodyLines.push(`User: ${slackSource.userId}`);
   bodyLines.push(`Timestamp: ${slackSource.messageTs}`);

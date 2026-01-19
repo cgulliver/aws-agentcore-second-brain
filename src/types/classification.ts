@@ -2,13 +2,20 @@
  * Classification Types and Interfaces
  * 
  * Validates: Requirement 6 (Message Classification)
+ * Validates: Requirement 56 (Query Receipt Logging - Phase 2)
  */
 
 /**
- * Valid classification types
+ * Valid classification types for capture intent
  * Each message is classified as exactly one of these
  */
 export type Classification = 'inbox' | 'idea' | 'decision' | 'project' | 'task';
+
+/**
+ * Extended classification types including query (for receipts)
+ * Phase 2: Adds 'query' for semantic query receipts
+ */
+export type ExtendedClassification = Classification | 'query' | 'fix' | 'clarify';
 
 /**
  * All valid classification values as an array
@@ -20,6 +27,20 @@ export const CLASSIFICATIONS: readonly Classification[] = [
   'decision',
   'project',
   'task',
+] as const;
+
+/**
+ * All extended classification values (including query, fix, clarify)
+ */
+export const EXTENDED_CLASSIFICATIONS: readonly ExtendedClassification[] = [
+  'inbox',
+  'idea',
+  'decision',
+  'project',
+  'task',
+  'query',
+  'fix',
+  'clarify',
 ] as const;
 
 /**

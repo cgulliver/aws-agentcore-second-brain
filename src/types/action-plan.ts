@@ -2,9 +2,16 @@
  * Action Plan Types and Interfaces
  * 
  * Validates: Requirement 42 (Action Plan Output Contract)
+ * Validates: Requirement 53 (Intent Classification - Phase 2)
  */
 
 import type { Classification } from './classification';
+
+/**
+ * Intent type for Phase 2 semantic query support
+ * Validates: Requirement 53.1
+ */
+export type Intent = 'capture' | 'query';
 
 /**
  * File operation types
@@ -35,12 +42,20 @@ export interface OmniFocusEmail {
  * Lambda validates this against the schema before executing side effects.
  * 
  * Validates: Requirement 42 (Action Plan Output Contract)
+ * Validates: Requirement 53 (Intent Classification - Phase 2)
+ * Validates: Requirement 1.1 (SB_ID Canonical Identifier)
  */
 export interface ActionPlan {
-  /** Classification type */
-  classification: Classification;
+  /** Intent type: capture (store new info) or query (retrieve existing info) */
+  intent: Intent;
   
-  /** Confidence score (0.0 to 1.0) */
+  /** Intent confidence score (0.0 to 1.0) */
+  intent_confidence: number;
+  
+  /** Classification type (required for capture intent, null for query) */
+  classification: Classification | null;
+  
+  /** Classification confidence score (0.0 to 1.0, for capture intent) */
   confidence: number;
   
   /** Whether clarification is needed */
@@ -49,10 +64,10 @@ export interface ActionPlan {
   /** Clarification prompt (if needs_clarification is true) */
   clarification_prompt?: string;
   
-  /** File operations to perform */
+  /** File operations to perform (empty for query intent) */
   file_operations: FileOperation[];
   
-  /** Commit message for CodeCommit */
+  /** Commit message for CodeCommit (for capture intent) */
   commit_message: string;
   
   /** OmniFocus email (for task classification) */
@@ -60,6 +75,15 @@ export interface ActionPlan {
   
   /** Slack reply text */
   slack_reply_text: string;
+  
+  /** Query response (for query intent) - Phase 2 */
+  query_response?: string;
+  
+  /** Cited files for query response (for query intent) - Phase 2 */
+  cited_files?: string[];
+  
+  /** Canonical identifier for durable items (idea, decision, project) */
+  sb_id?: string;
 }
 
 /**
@@ -69,6 +93,11 @@ export interface ActionPlanValidationResult {
   valid: boolean;
   errors: string[];
 }
+
+/**
+ * Valid intent types
+ */
+const VALID_INTENTS: readonly Intent[] = ['capture', 'query'];
 
 /**
  * Valid file operation types
@@ -95,6 +124,7 @@ const VALID_PATH_PREFIXES: Record<Classification, string> = {
  * Validate an Action Plan against the schema
  * 
  * Validates: Requirement 43 (Action Plan Validation)
+ * Validates: Requirement 53 (Intent Classification - Phase 2)
  */
 export function validateActionPlan(plan: unknown): ActionPlanValidationResult {
   const errors: string[] = [];
@@ -105,11 +135,34 @@ export function validateActionPlan(plan: unknown): ActionPlanValidationResult {
   
   const p = plan as Record<string, unknown>;
   
-  // Required fields
-  if (typeof p.classification !== 'string') {
-    errors.push('classification must be a string');
-  } else if (!VALID_CLASSIFICATIONS.includes(p.classification as Classification)) {
-    errors.push(`classification must be one of: ${VALID_CLASSIFICATIONS.join(', ')}`);
+  // Intent fields (Phase 2) - required
+  if (typeof p.intent !== 'string') {
+    errors.push('intent must be a string');
+  } else if (!VALID_INTENTS.includes(p.intent as Intent)) {
+    errors.push(`intent must be one of: ${VALID_INTENTS.join(', ')}`);
+  }
+  
+  if (typeof p.intent_confidence !== 'number') {
+    errors.push('intent_confidence must be a number');
+  } else if (p.intent_confidence < 0 || p.intent_confidence > 1) {
+    errors.push('intent_confidence must be between 0.0 and 1.0');
+  }
+  
+  const isQueryIntent = p.intent === 'query';
+  
+  // Classification validation (required for capture, null for query)
+  if (isQueryIntent) {
+    // For query intent, classification should be null or not present
+    if (p.classification !== null && p.classification !== undefined) {
+      errors.push('classification must be null for query intent');
+    }
+  } else {
+    // For capture intent, classification is required
+    if (typeof p.classification !== 'string') {
+      errors.push('classification must be a string for capture intent');
+    } else if (!VALID_CLASSIFICATIONS.includes(p.classification as Classification)) {
+      errors.push(`classification must be one of: ${VALID_CLASSIFICATIONS.join(', ')}`);
+    }
   }
   
   if (typeof p.confidence !== 'number') {
@@ -126,9 +179,15 @@ export function validateActionPlan(plan: unknown): ActionPlanValidationResult {
     errors.push('clarification_prompt is required when needs_clarification is true');
   }
   
+  // File operations validation
   if (!Array.isArray(p.file_operations)) {
     errors.push('file_operations must be an array');
   } else {
+    // For query intent, file_operations must be empty
+    if (isQueryIntent && p.file_operations.length > 0) {
+      errors.push('file_operations must be empty for query intent');
+    }
+    
     p.file_operations.forEach((op, index) => {
       if (typeof op !== 'object' || op === null) {
         errors.push(`file_operations[${index}] must be an object`);
@@ -139,8 +198,8 @@ export function validateActionPlan(plan: unknown): ActionPlanValidationResult {
       
       if (typeof fileOp.path !== 'string') {
         errors.push(`file_operations[${index}].path must be a string`);
-      } else {
-        // Validate path matches classification taxonomy
+      } else if (!isQueryIntent) {
+        // Validate path matches classification taxonomy (only for capture intent)
         const classification = p.classification as Classification;
         const expectedPrefix = VALID_PATH_PREFIXES[classification];
         if (expectedPrefix && !fileOp.path.startsWith(expectedPrefix)) {
@@ -187,8 +246,26 @@ export function validateActionPlan(plan: unknown): ActionPlanValidationResult {
     errors.push('slack_reply_text must be a string');
   }
   
+  // Query-specific validation (Phase 2)
+  if (isQueryIntent) {
+    if (typeof p.query_response !== 'string') {
+      errors.push('query_response is required for query intent');
+    }
+    if (!Array.isArray(p.cited_files)) {
+      errors.push('cited_files must be an array for query intent');
+    } else {
+      p.cited_files.forEach((file, index) => {
+        if (typeof file !== 'string') {
+          errors.push(`cited_files[${index}] must be a string`);
+        }
+      });
+    }
+  }
+  
   // Check for unexpected fields
   const expectedFields = [
+    'intent',
+    'intent_confidence',
     'classification',
     'confidence',
     'needs_clarification',
@@ -197,6 +274,9 @@ export function validateActionPlan(plan: unknown): ActionPlanValidationResult {
     'commit_message',
     'omnifocus_email',
     'slack_reply_text',
+    'query_response',
+    'cited_files',
+    'sb_id',
   ];
   
   Object.keys(p).forEach((key) => {

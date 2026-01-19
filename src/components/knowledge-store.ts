@@ -201,12 +201,17 @@ export async function appendToFile(
 /**
  * Generate file path based on classification
  * 
- * Validates: Requirements 11.1-11.4, 29.3
+ * Validates: Requirements 11.1-11.4, 29.3, 3.1, 3.2, 3.3
+ * 
+ * New filename convention for idea/decision/project:
+ * - Pattern: `<folder>/<YYYY-MM-DD>__<slug>__<SB_ID>.md`
+ * - Example: `10-ideas/2025-01-18__event-sourcing-audit__sb-a7f3c2d.md`
  */
 export function generateFilePath(
   classification: Classification,
   slug?: string,
-  date?: Date
+  date?: Date,
+  sbId?: string
 ): string {
   const d = date || new Date();
   const dateStr = d.toISOString().split('T')[0]; // YYYY-MM-DD
@@ -216,12 +221,21 @@ export function generateFilePath(
       return `00-inbox/${dateStr}.md`;
     case 'idea':
       if (!slug) throw new Error('Slug required for idea classification');
+      if (sbId) {
+        return `10-ideas/${dateStr}__${slug}__${sbId}.md`;
+      }
       return `10-ideas/${slug}.md`;
     case 'decision':
       if (!slug) throw new Error('Slug required for decision classification');
+      if (sbId) {
+        return `20-decisions/${dateStr}__${slug}__${sbId}.md`;
+      }
       return `20-decisions/${dateStr}-${slug}.md`;
     case 'project':
       if (!slug) throw new Error('Slug required for project classification');
+      if (sbId) {
+        return `30-projects/${dateStr}__${slug}__${sbId}.md`;
+      }
       return `30-projects/${slug}.md`;
     case 'task':
       // Tasks don't create files, they send emails

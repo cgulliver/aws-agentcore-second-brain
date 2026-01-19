@@ -491,7 +491,7 @@ export async function executeActionPlan(
     const receipt = createReceipt(
       eventId,
       slackContext,
-      plan.classification,
+      plan.classification || 'inbox',
       plan.confidence,
       actions,
       plan.file_operations.map((op) => op.path),

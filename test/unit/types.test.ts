@@ -55,6 +55,8 @@ describe('Classification Types', () => {
 
 describe('Action Plan Validation', () => {
   const validActionPlan = {
+    intent: 'capture',
+    intent_confidence: 0.95,
     classification: 'inbox',
     confidence: 0.9,
     needs_clarification: false,
@@ -69,10 +71,36 @@ describe('Action Plan Validation', () => {
     slack_reply_text: 'Captured as inbox',
   };
 
-  it('should validate a correct action plan', () => {
+  const validQueryPlan = {
+    intent: 'query',
+    intent_confidence: 0.92,
+    classification: null,
+    confidence: 0,
+    needs_clarification: false,
+    file_operations: [],
+    commit_message: '',
+    slack_reply_text: 'Here is what I found...',
+    query_response: 'Based on your knowledge base, you have 3 decisions about budgets.',
+    cited_files: ['20-decisions/2026-01-10-q1-budget.md'],
+  };
+
+  it('should validate a correct capture action plan', () => {
     const result = validateActionPlan(validActionPlan);
     expect(result.valid).toBe(true);
     expect(result.errors).toHaveLength(0);
+  });
+
+  it('should validate a correct query action plan', () => {
+    const result = validateActionPlan(validQueryPlan);
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it('should reject invalid intent', () => {
+    const invalid = { ...validActionPlan, intent: 'invalid' };
+    const result = validateActionPlan(invalid);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.includes('intent'))).toBe(true);
   });
 
   it('should reject invalid classification', () => {
@@ -112,11 +140,37 @@ describe('Action Plan Validation', () => {
     expect(result.valid).toBe(false);
     expect(result.errors.some(e => e.includes('10-ideas'))).toBe(true);
   });
+
+  it('should reject file_operations for query intent', () => {
+    const invalid = {
+      ...validQueryPlan,
+      file_operations: [{ path: 'test.md', operation: 'create', content: 'test' }],
+    };
+    const result = validateActionPlan(invalid);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.includes('file_operations must be empty for query'))).toBe(true);
+  });
+
+  it('should require query_response for query intent', () => {
+    const { query_response, ...invalid } = validQueryPlan;
+    const result = validateActionPlan(invalid);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.includes('query_response is required'))).toBe(true);
+  });
+
+  it('should require cited_files for query intent', () => {
+    const { cited_files, ...invalid } = validQueryPlan;
+    const result = validateActionPlan(invalid);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.includes('cited_files must be an array'))).toBe(true);
+  });
 });
 
 describe('Action Plan Parsing', () => {
   it('should parse valid JSON', () => {
     const json = JSON.stringify({
+      intent: 'capture',
+      intent_confidence: 0.95,
       classification: 'inbox',
       confidence: 0.9,
       needs_clarification: false,
@@ -127,13 +181,15 @@ describe('Action Plan Parsing', () => {
     const result = parseActionPlanFromLLM(json);
     expect(result).not.toBeNull();
     expect(result?.classification).toBe('inbox');
+    expect(result?.intent).toBe('capture');
   });
 
   it('should extract JSON from markdown code block', () => {
-    const wrapped = '```json\n{"classification":"inbox","confidence":0.9,"needs_clarification":false,"file_operations":[],"commit_message":"test","slack_reply_text":"test"}\n```';
+    const wrapped = '```json\n{"intent":"capture","intent_confidence":0.95,"classification":"inbox","confidence":0.9,"needs_clarification":false,"file_operations":[],"commit_message":"test","slack_reply_text":"test"}\n```';
     const result = parseActionPlanFromLLM(wrapped);
     expect(result).not.toBeNull();
     expect(result?.classification).toBe('inbox');
+    expect(result?.intent).toBe('capture');
   });
 
   it('should return null for invalid JSON', () => {

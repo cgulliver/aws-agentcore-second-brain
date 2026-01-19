@@ -46,6 +46,8 @@ describe('Property 6: Classification Type Invariant', () => {
             reasoning: 'Test',
             title: 'Test',
             content: 'Content',
+            intent: 'capture',
+            intent_confidence: 0.9,
             file_operations: [],
             ...(classification === 'task' ? { task_details: { title: 'Task' } } : {}),
           };
@@ -103,6 +105,8 @@ describe('Property 7: Confidence Bounds Invariant', () => {
             reasoning: 'Test',
             title: 'Test',
             content: 'Content',
+            intent: 'capture',
+            intent_confidence: 0.9,
             file_operations: [],
           };
 
@@ -129,6 +133,8 @@ describe('Property 7: Confidence Bounds Invariant', () => {
             reasoning: 'Test',
             title: 'Test',
             content: 'Content',
+            intent: 'capture',
+            intent_confidence: 0.9,
             file_operations: [],
           };
 
@@ -155,6 +161,8 @@ describe('Property 7: Confidence Bounds Invariant', () => {
             reasoning: 'Test',
             title: 'Test',
             content: 'Content',
+            intent: 'capture',
+            intent_confidence: 0.9,
             file_operations: [],
           };
 
@@ -177,6 +185,8 @@ describe('Property 7: Confidence Bounds Invariant', () => {
       reasoning: 'Test',
       title: 'Test',
       content: 'Content',
+      intent: 'capture',
+      intent_confidence: 0.9,
       file_operations: [],
     };
 
@@ -186,6 +196,8 @@ describe('Property 7: Confidence Bounds Invariant', () => {
       reasoning: 'Test',
       title: 'Test',
       content: 'Content',
+      intent: 'capture',
+      intent_confidence: 0.9,
       file_operations: [],
     };
 

@@ -5,10 +5,11 @@
  * Follows strict style guidelines: headings not bold, bullets over prose,
  * ISO dates, no emojis, source attribution.
  * 
- * Validates: Requirements 31-35
+ * Validates: Requirements 31-35, 2.1-2.5, 3.1-3.3
  */
 
 import type { Classification } from '../types';
+import { extractTags } from './tag-extractor';
 
 // Template options
 export interface TemplateOptions {
@@ -18,6 +19,19 @@ export interface TemplateOptions {
     channelId: string;
     messageTs: string;
   };
+  sbId?: string; // Canonical SB_ID for front matter
+}
+
+/**
+ * Front matter structure for knowledge artifacts
+ * Validates: Requirements 2.1, 2.2, 2.3
+ */
+export interface FrontMatter {
+  id: string;           // SB_ID (e.g., "sb-a7f3c2d")
+  type: 'idea' | 'decision' | 'project';
+  title: string;        // Human-readable title
+  created_at: string;   // ISO-8601 timestamp
+  tags: string[];       // 2-4 extracted tags
 }
 
 // Inbox entry structure
@@ -67,6 +81,81 @@ export function formatISODate(date: Date): string {
  */
 export function formatISOTime(date: Date): string {
   return date.toISOString().split('T')[1].substring(0, 5);
+}
+
+/**
+ * Format ISO-8601 timestamp (full)
+ */
+export function formatISO8601(date: Date): string {
+  return date.toISOString();
+}
+
+/**
+ * Check if classification should have front matter
+ * Validates: Requirements 2.4
+ */
+export function shouldHaveFrontMatter(classification: Classification): boolean {
+  return classification === 'idea' || classification === 'decision' || classification === 'project';
+}
+
+/**
+ * Generate YAML front matter block
+ * Validates: Requirements 2.1, 2.2, 2.3, 2.5
+ * 
+ * @param frontMatter - The front matter data
+ * @returns YAML string with --- delimiters
+ */
+export function generateFrontMatter(frontMatter: FrontMatter): string {
+  const lines: string[] = [];
+  
+  lines.push('---');
+  lines.push(`id: ${frontMatter.id}`);
+  lines.push(`type: ${frontMatter.type}`);
+  lines.push(`title: "${frontMatter.title.replace(/"/g, '\\"')}"`);
+  lines.push(`created_at: ${frontMatter.created_at}`);
+  
+  if (frontMatter.tags.length > 0) {
+    lines.push('tags:');
+    for (const tag of frontMatter.tags) {
+      lines.push(`  - ${tag}`);
+    }
+  } else {
+    lines.push('tags: []');
+  }
+  
+  lines.push('---');
+  lines.push('');
+  
+  return lines.join('\n');
+}
+
+/**
+ * Generate filename with SB_ID
+ * Validates: Requirements 3.1, 3.2, 3.3
+ * 
+ * @param date - ISO date string (YYYY-MM-DD)
+ * @param slug - Human-readable slug
+ * @param sbId - Canonical identifier
+ * @returns Filename (e.g., "2025-01-18__wharton-cto-program__sb-a7f3c2d.md")
+ */
+export function generateFilename(date: string, slug: string, sbId: string): string {
+  return `${date}__${slug}__${sbId}.md`;
+}
+
+/**
+ * Generate a wikilink from an SB_ID
+ * Validates: Requirements 5.1, 5.3, 5.4
+ * 
+ * @param sbId - The canonical identifier (e.g., "sb-a7f3c2d")
+ * @param displayText - Optional human-readable text
+ * @returns Wikilink string (e.g., "[[sb-a7f3c2d]]" or "[[sb-a7f3c2d|Wharton CTO Program]]")
+ */
+export function generateWikilink(sbId: string, displayText?: string): string {
+  if (!sbId) return '';
+  if (displayText) {
+    return `[[${sbId}|${displayText}]]`;
+  }
+  return `[[${sbId}]]`;
 }
 
 /**
@@ -148,32 +237,45 @@ export function generateInboxHeader(date: Date): string {
 /**
  * Generate idea note template
  * 
- * Validates: Requirements 33.1, 33.2
+ * Validates: Requirements 33.1, 33.2, 2.1
  * 
  * Format:
+ * ---
+ * id: sb-xxxxxxx
+ * type: idea
+ * title: "Title"
+ * created_at: ISO-8601
+ * tags:
+ *   - tag1
+ * ---
+ * 
  * # Title
  * 
  * ## Context
  * ...
- * 
- * ## Key Points
- * - point 1
- * - point 2
- * 
- * ## Implications
- * - implication 1
- * 
- * ## Open Questions
- * - question 1
- * 
- * ---
- * Source: Slack DM
  */
 export function generateIdeaNote(
   idea: IdeaNote,
   options?: TemplateOptions
 ): string {
   const lines: string[] = [];
+  const timestamp = options?.timestamp || new Date();
+  
+  // Generate front matter if sbId is provided
+  if (options?.sbId) {
+    const content = `${idea.title} ${idea.context} ${idea.keyPoints.join(' ')}`;
+    const tags = extractTags(content, idea.title);
+    
+    const frontMatter: FrontMatter = {
+      id: options.sbId,
+      type: 'idea',
+      title: sanitizeForMarkdown(idea.title),
+      created_at: formatISO8601(timestamp),
+      tags,
+    };
+    
+    lines.push(generateFrontMatter(frontMatter));
+  }
   
   // Title
   lines.push(`# ${sanitizeForMarkdown(idea.title)}`);
@@ -223,30 +325,45 @@ export function generateIdeaNote(
 /**
  * Generate decision note template
  * 
- * Validates: Requirements 34.1, 34.2
+ * Validates: Requirements 34.1, 34.2, 2.2
  * 
  * Format:
+ * ---
+ * id: sb-xxxxxxx
+ * type: decision
+ * title: "Decision Statement"
+ * created_at: ISO-8601
+ * tags:
+ *   - tag1
+ * ---
+ * 
  * # Decision: Statement
  * 
  * Date: YYYY-MM-DD
- * 
- * ## Rationale
  * ...
- * 
- * ## Alternatives Considered
- * - alt 1
- * 
- * ## Consequences
- * - consequence 1
- * 
- * ---
- * Source: Slack DM
  */
 export function generateDecisionNote(
   decision: DecisionNote,
   options?: TemplateOptions
 ): string {
   const lines: string[] = [];
+  const timestamp = options?.timestamp || decision.date;
+  
+  // Generate front matter if sbId is provided
+  if (options?.sbId) {
+    const content = `${decision.decision} ${decision.rationale} ${(decision.alternatives || []).join(' ')} ${(decision.consequences || []).join(' ')}`;
+    const tags = extractTags(content, decision.decision);
+    
+    const frontMatter: FrontMatter = {
+      id: options.sbId,
+      type: 'decision',
+      title: sanitizeForMarkdown(decision.decision),
+      created_at: formatISO8601(timestamp),
+      tags,
+    };
+    
+    lines.push(generateFrontMatter(frontMatter));
+  }
   
   // Title with explicit decision statement
   lines.push(`# Decision: ${sanitizeForMarkdown(decision.decision)}`);
@@ -292,33 +409,45 @@ export function generateDecisionNote(
 /**
  * Generate project page template
  * 
- * Validates: Requirements 35.1, 35.2
+ * Validates: Requirements 35.1, 35.2, 2.3
  * 
  * Format:
+ * ---
+ * id: sb-xxxxxxx
+ * type: project
+ * title: "Project Title"
+ * created_at: ISO-8601
+ * tags:
+ *   - tag1
+ * ---
+ * 
  * # Project: Title
  * 
  * Status: active
- * 
- * ## Objective
  * ...
- * 
- * ## Key Decisions
- * - [[decision-link]]
- * 
- * ## Next Steps
- * - step 1
- * 
- * ## References
- * - ref 1
- * 
- * ---
- * Source: Slack DM
  */
 export function generateProjectPage(
   project: ProjectPage,
   options?: TemplateOptions
 ): string {
   const lines: string[] = [];
+  const timestamp = options?.timestamp || new Date();
+  
+  // Generate front matter if sbId is provided
+  if (options?.sbId) {
+    const content = `${project.title} ${project.objective} ${(project.nextSteps || []).join(' ')}`;
+    const tags = extractTags(content, project.title);
+    
+    const frontMatter: FrontMatter = {
+      id: options.sbId,
+      type: 'project',
+      title: sanitizeForMarkdown(project.title),
+      created_at: formatISO8601(timestamp),
+      tags,
+    };
+    
+    lines.push(generateFrontMatter(frontMatter));
+  }
   
   // Title
   lines.push(`# Project: ${sanitizeForMarkdown(project.title)}`);
@@ -339,8 +468,10 @@ export function generateProjectPage(
     lines.push('## Key Decisions');
     lines.push('');
     for (const dec of project.keyDecisions) {
-      // Format as wiki-style link if it looks like a file reference
-      if (dec.startsWith('20-decisions/')) {
+      // Format as wiki-style link if it looks like an SB_ID
+      if (dec.startsWith('sb-')) {
+        lines.push(`- [[${dec}]]`);
+      } else if (dec.startsWith('20-decisions/')) {
         lines.push(`- [[${dec}]]`);
       } else {
         lines.push(`- ${sanitizeForMarkdown(dec)}`);

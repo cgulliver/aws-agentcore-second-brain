@@ -63,7 +63,19 @@ import {
   canApplyFix,
 } from '../components/fix-handler';
 import type { KnowledgeStoreConfig } from '../components/knowledge-store';
+import {
+  searchKnowledgeBase,
+  type KnowledgeSearchConfig,
+} from '../components/knowledge-search';
+import {
+  processQuery,
+  buildQueryPrompt,
+  generateNoResultsResponse,
+  formatQuerySlackReply,
+  validateResponseCitations,
+} from '../components/query-handler';
 import { log, redactPII } from './logging';
+import { createHash } from 'crypto';
 
 // Environment variables
 const REPOSITORY_NAME = process.env.REPOSITORY_NAME!;
@@ -198,19 +210,34 @@ async function processMessage(message: SQSEventMessage): Promise<void> {
 
     log('info', 'Classification result', {
       event_id,
+      intent: actionPlan.intent,
+      intent_confidence: actionPlan.intent_confidence,
       classification: actionPlan.classification,
       confidence: actionPlan.confidence,
+      has_query_response: !!actionPlan.query_response,
+      has_cited_files: !!actionPlan.cited_files,
     });
 
     // Step 6: Validate Action Plan
     const validation = validateActionPlan(actionPlan);
     if (!validation.valid) {
+      log('warn', 'Validation errors', {
+        event_id,
+        errors: validation.errors,
+        actionPlan: JSON.stringify(actionPlan).substring(0, 1000),
+      });
       await handleValidationFailure(event_id, slackContext, validation.errors.map(e => e.message));
       return;
     }
 
-    // Step 7: Check if clarification needed
-    if (shouldAskClarification(actionPlan.confidence, actionPlan.classification)) {
+    // Step 6.5: Check for query intent (Phase 2)
+    if (actionPlan.intent === 'query') {
+      await handleQueryIntent(event_id, slackContext, message_text, actionPlan, systemPrompt);
+      return;
+    }
+
+    // Step 7: Check if clarification needed (only for capture intent)
+    if (actionPlan.classification && shouldAskClarification(actionPlan.confidence, actionPlan.classification)) {
       await handleLowConfidence(event_id, slackContext, message_text, actionPlan);
       return;
     }
@@ -386,13 +413,15 @@ async function handleLowConfidence(
     confidence: actionPlan.confidence,
   });
 
+  const classification = actionPlan.classification || 'inbox';
+
   // Store conversation context
   await setContext(conversationConfig, slackContext.channel_id, slackContext.user_id, {
     original_event_id: eventId,
     original_message: originalMessage,
-    original_classification: actionPlan.classification,
+    original_classification: classification,
     original_confidence: actionPlan.confidence,
-    clarification_asked: generateClarificationPrompt(actionPlan.classification, actionPlan.confidence),
+    clarification_asked: generateClarificationPrompt(classification, actionPlan.confidence),
   });
 
   // Send clarification request
@@ -460,6 +489,139 @@ async function handleValidationFailure(
 
   await appendReceipt(knowledgeConfig, receipt);
   await markFailed(idempotencyConfig, eventId, `Validation failed: ${errors.join(', ')}`);
+}
+
+/**
+ * Handle query intent (Phase 2)
+ * 
+ * Validates: Requirements 53.2, 53.3, 54, 55, 56
+ */
+async function handleQueryIntent(
+  eventId: string,
+  slackContext: SlackContext,
+  queryText: string,
+  actionPlan: ActionPlan,
+  systemPrompt: { content: string; metadata: { commitId: string; sha256: string } }
+): Promise<void> {
+  log('info', 'Processing query intent', {
+    event_id: eventId,
+    intent_confidence: actionPlan.intent_confidence,
+  });
+
+  await updateExecutionState(idempotencyConfig, eventId, { status: 'EXECUTING' });
+
+  try {
+    // Search the knowledge base
+    const searchConfig: KnowledgeSearchConfig = {
+      repositoryName: REPOSITORY_NAME,
+      branchName: 'main',
+      maxFilesToSearch: 50,
+      maxExcerptLength: 500,
+    };
+
+    const { CodeCommitClient } = await import('@aws-sdk/client-codecommit');
+    const codecommitClient = new CodeCommitClient({ region: AWS_REGION });
+    
+    const searchResult = await searchKnowledgeBase(codecommitClient, searchConfig);
+
+    // Process query against found files
+    const queryResult = processQuery(queryText, searchResult.files);
+
+    let responseText: string;
+    let citedFiles: string[] = [];
+
+    if (!queryResult.hasResults) {
+      // No relevant results found
+      responseText = generateNoResultsResponse(queryText);
+    } else {
+      // Use AgentCore to generate response from context
+      const queryPrompt = buildQueryPrompt(queryText, queryResult.context, queryResult.citedFiles);
+      
+      const agentResult = await invokeAgentRuntime(agentConfig, {
+        prompt: queryPrompt,
+        system_prompt: systemPrompt.content,
+        session_id: `${slackContext.channel_id}#${slackContext.user_id}`,
+      });
+
+      if (agentResult.success && agentResult.actionPlan?.query_response) {
+        responseText = agentResult.actionPlan.query_response;
+        citedFiles = queryResult.citedFiles.map(f => f.path);
+        
+        // Validate citations (hallucination guard)
+        const citationValidation = validateResponseCitations(responseText, queryResult.citedFiles);
+        if (!citationValidation.valid) {
+          log('warn', 'Query response citation warnings', {
+            event_id: eventId,
+            warnings: citationValidation.warnings,
+          });
+        }
+      } else {
+        // Fallback: use the excerpts directly
+        responseText = queryResult.citedFiles
+          .map(f => `From \`${f.path}\`:\n${f.excerpt}`)
+          .join('\n\n');
+        citedFiles = queryResult.citedFiles.map(f => f.path);
+      }
+    }
+
+    // Format and send Slack reply
+    const slackReply = formatQuerySlackReply(responseText, queryResult.citedFiles);
+    
+    await sendSlackReply(
+      { botTokenParam: BOT_TOKEN_PARAM },
+      {
+        channel: slackContext.channel_id,
+        text: slackReply,
+        thread_ts: slackContext.thread_ts,
+      }
+    );
+
+    // Create query receipt (hash query for PII protection)
+    const queryHash = createHash('sha256').update(queryText).digest('hex').substring(0, 16);
+    
+    const receipt = createReceipt(
+      eventId,
+      slackContext,
+      'query', // ExtendedClassification for Phase 2
+      actionPlan.intent_confidence,
+      [{ type: 'slack_reply', status: 'success', details: { type: 'query_response' } }],
+      citedFiles,
+      null, // No commit for queries
+      `Query processed: ${queryHash}`,
+      {
+        queryHash,
+        filesSearched: searchResult.totalFilesSearched,
+        filesCited: citedFiles.length,
+      }
+    );
+
+    await appendReceipt(knowledgeConfig, receipt);
+    await markCompleted(idempotencyConfig, eventId);
+
+    log('info', 'Query completed', {
+      event_id: eventId,
+      files_searched: searchResult.totalFilesSearched,
+      files_cited: citedFiles.length,
+    });
+
+  } catch (error) {
+    log('error', 'Query processing failed', {
+      event_id: eventId,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+
+    await sendSlackReply(
+      { botTokenParam: BOT_TOKEN_PARAM },
+      {
+        channel: slackContext.channel_id,
+        text: formatErrorReply('Failed to search knowledge base. Please try again.'),
+        thread_ts: slackContext.thread_ts,
+      }
+    );
+
+    await markFailed(idempotencyConfig, eventId, error instanceof Error ? error.message : 'Query failed');
+    throw error;
+  }
 }
 
 /**

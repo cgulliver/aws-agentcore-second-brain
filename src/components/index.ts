@@ -75,6 +75,7 @@ export {
   type TaskDetails,
   type ValidationError,
   type ValidationResult,
+  type Intent,
 } from './action-plan';
 
 // Action Executor
@@ -162,3 +163,32 @@ export {
   type DecisionNote,
   type ProjectPage,
 } from './markdown-templates';
+
+// Knowledge Search (Phase 2)
+export {
+  searchKnowledgeBase,
+  formatFilesAsContext,
+  scoreFileRelevance,
+  getTopRelevantFiles,
+  extractDateFromPath,
+  extractExcerpt,
+  DEFAULT_SEARCH_CONFIG,
+  type KnowledgeSearchConfig,
+  type KnowledgeFile,
+  type CitedFile,
+  type KnowledgeSearchResult,
+} from './knowledge-search';
+
+// Query Handler (Phase 2)
+export {
+  processQuery,
+  buildQueryPrompt,
+  generateNoResultsResponse,
+  formatCitationsForSlack,
+  formatQuerySlackReply,
+  validateResponseCitations,
+  isLikelyQuery,
+  DEFAULT_QUERY_CONFIG,
+  type QueryConfig,
+  type QueryResult,
+} from './query-handler';

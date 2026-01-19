@@ -9,7 +9,6 @@ import * as ecr from 'aws-cdk-lib/aws-ecr';
 import * as codebuild from 'aws-cdk-lib/aws-codebuild';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
-import * as ses from 'aws-cdk-lib/aws-ses';
 import * as s3Assets from 'aws-cdk-lib/aws-s3-assets';
 import * as cr from 'aws-cdk-lib/custom-resources';
 import * as logs from 'aws-cdk-lib/aws-logs';
@@ -315,13 +314,61 @@ export class CoreStack extends cdk.Stack {
       },
     });
 
+    // =========================================================================
+    // Task 31.1: AgentCore Memory Resource (v2 - Behavioral Learning)
+    // Validates: Requirements 58.1, 58.2
+    // =========================================================================
+
+    // AgentCore Memory for behavioral learning (user preferences, patterns)
+    const agentMemory = new cdk.CfnResource(this, 'AgentMemory', {
+      type: 'AWS::BedrockAgentCore::Memory',
+      properties: {
+        Name: 'second_brain_memory',
+        Description: 'Memory for Second Brain agent - stores user preferences and learned patterns',
+        EventExpiryDuration: 30, // days
+        MemoryStrategies: [
+          {
+            UserPreferenceMemoryStrategy: {
+              Name: 'PreferenceLearner',
+              Namespaces: ['/preferences/{actorId}'],
+            },
+          },
+          {
+            SemanticMemoryStrategy: {
+              Name: 'PatternExtractor',
+              Namespaces: ['/patterns/{actorId}'],
+            },
+          },
+        ],
+      },
+    });
+
+    // Grant AgentCore role permissions for Memory operations (Task 31.4)
+    agentCoreRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'AgentCoreMemory',
+        effect: iam.Effect.ALLOW,
+        actions: [
+          'bedrock-agentcore:GetMemory',
+          'bedrock-agentcore:CreateMemoryRecord',
+          'bedrock-agentcore:SearchMemoryRecords',
+          'bedrock-agentcore:DeleteMemoryRecord',
+        ],
+        resources: [
+          `arn:aws:bedrock-agentcore:${this.region}:${this.account}:memory/*`,
+        ],
+      })
+    );
+
     // AgentCore Runtime (CfnRuntime)
     // Note: Using L1 construct as L2 may not be available yet
+    // Task 31.2: Pass MEMORY_ID to Runtime via environment variable
+    // Include source hash in description to force Runtime update on code changes
     const agentRuntime = new cdk.CfnResource(this, 'ClassifierRuntime', {
       type: 'AWS::BedrockAgentCore::Runtime',
       properties: {
         AgentRuntimeName: 'second_brain_classifier',
-        Description: 'Second Brain classifier agent for message classification',
+        Description: `Second Brain classifier agent (build: ${agentSourceAsset.assetHash.substring(0, 8)})`,
         AgentRuntimeArtifact: {
           ContainerConfiguration: {
             ContainerUri: `${this.ecrRepository.repositoryUri}:latest`,
@@ -335,9 +382,13 @@ export class CoreStack extends cdk.Stack {
         EnvironmentVariables: {
           KNOWLEDGE_REPO_NAME: this.repository.repositoryName,
           AWS_DEFAULT_REGION: this.region,
+          MEMORY_ID: agentMemory.getAtt('MemoryId').toString(),
         },
       },
     });
+
+    // Runtime depends on Memory being created first
+    agentRuntime.node.addDependency(agentMemory);
 
     // =========================================================================
     // Task 3.8: Build Trigger Custom Resource
@@ -394,7 +445,6 @@ export class CoreStack extends cdk.Stack {
 
     // AgentCore Runtime depends on successful build
     agentRuntime.node.addDependency(triggerBuild);
-
 
     // =========================================================================
     // Task 3.11: SES Email Identity
@@ -584,6 +634,11 @@ export class CoreStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'AgentRuntimeArn', {
       value: agentRuntime.getAtt('AgentRuntimeArn').toString(),
       description: 'AgentCore Runtime ARN',
+    });
+
+    new cdk.CfnOutput(this, 'AgentMemoryId', {
+      value: agentMemory.getAtt('MemoryId').toString(),
+      description: 'AgentCore Memory ID for behavioral learning',
     });
 
     new cdk.CfnOutput(this, 'WorkerFunctionArn', {

@@ -4,10 +4,15 @@
  * Defines the Action Plan schema and provides validation.
  * Parses LLM output to extract Action Plan JSON.
  * 
- * Validates: Requirements 42, 43
+ * Validates: Requirements 42, 43, 53 (Phase 2 Intent)
  */
 
 import type { Classification } from '../types';
+
+/**
+ * Intent type for Phase 2 semantic query support
+ */
+export type Intent = 'capture' | 'query';
 
 // File operation in Action Plan
 export interface FileOperation {
@@ -23,9 +28,14 @@ export interface TaskDetails {
   due_date?: string;
 }
 
-// Full Action Plan structure
+// Full Action Plan structure (Phase 2 with intent)
 export interface ActionPlan {
-  classification: Classification;
+  // Phase 2: Intent classification
+  intent: Intent;
+  intent_confidence: number;
+  
+  // Original fields
+  classification: Classification | null;
   confidence: number;
   reasoning: string;
   title: string;
@@ -33,6 +43,10 @@ export interface ActionPlan {
   suggested_slug?: string;
   file_operations: FileOperation[];
   task_details?: TaskDetails;
+  
+  // Phase 2: Query response fields
+  query_response?: string;
+  cited_files?: string[];
 }
 
 // Validation error
@@ -68,7 +82,7 @@ const VALID_PATH_PREFIXES: Record<Classification, string[]> = {
 /**
  * Validate Action Plan against schema
  * 
- * Validates: Requirements 43.1, 43.2
+ * Validates: Requirements 43.1, 43.2, 53 (Phase 2 Intent)
  */
 export function validateActionPlan(plan: unknown): ValidationResult {
   const errors: ValidationError[] = [];
@@ -83,7 +97,47 @@ export function validateActionPlan(plan: unknown): ValidationResult {
 
   const p = plan as Record<string, unknown>;
 
-  // Required fields
+  // Phase 2: Intent validation
+  const validIntents: Intent[] = ['capture', 'query'];
+  if (!p.intent) {
+    // Default to capture for backward compatibility
+    p.intent = 'capture';
+  } else if (!validIntents.includes(p.intent as Intent)) {
+    errors.push({
+      field: 'intent',
+      message: `Invalid intent: ${p.intent}. Must be one of: ${validIntents.join(', ')}`,
+    });
+  }
+
+  if (p.intent_confidence === undefined || p.intent_confidence === null) {
+    // Default to 1.0 for backward compatibility
+    p.intent_confidence = 1.0;
+  } else {
+    const intentConfidence = Number(p.intent_confidence);
+    if (isNaN(intentConfidence) || intentConfidence < 0 || intentConfidence > 1) {
+      errors.push({
+        field: 'intent_confidence',
+        message: 'Intent confidence must be a number between 0 and 1',
+      });
+    }
+  }
+
+  const isQueryIntent = p.intent === 'query';
+
+  // For query intent, validate query-specific fields
+  // Note: query_response and cited_files are populated by the worker after searching,
+  // so they may not be present in the initial Action Plan from the LLM
+  if (isQueryIntent) {
+    // query_response and cited_files are optional at validation time
+    // They will be populated by the worker after knowledge base search
+    if (Array.isArray(p.file_operations) && p.file_operations.length > 0) {
+      errors.push({ field: 'file_operations', message: 'File operations must be empty for query intent' });
+    }
+    // Skip classification validation for query intent
+    return { valid: errors.length === 0, errors };
+  }
+
+  // Required fields for capture intent
   if (!p.classification) {
     errors.push({ field: 'classification', message: 'Classification is required' });
   } else if (!VALID_CLASSIFICATIONS.includes(p.classification as Classification)) {
@@ -248,6 +302,8 @@ export function createDefaultActionPlan(
   const timeStr = now.toISOString().split('T')[1].split('.')[0];
 
   return {
+    intent: 'capture',
+    intent_confidence: 1.0,
     classification,
     confidence: 0.5,
     reasoning: 'Default classification due to processing error',

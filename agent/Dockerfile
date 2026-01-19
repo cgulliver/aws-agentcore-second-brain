@@ -3,7 +3,8 @@
 #
 # Validates: Requirements 6.3, 28
 
-FROM --platform=linux/arm64 python:3.11-slim
+# Use ECR Public Gallery to avoid Docker Hub rate limits
+FROM --platform=linux/arm64 public.ecr.aws/docker/library/python:3.11-slim
 
 # Set working directory
 WORKDIR /app

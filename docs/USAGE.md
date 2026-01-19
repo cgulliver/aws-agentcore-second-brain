@@ -38,7 +38,7 @@ I have an idea: what if we used webhooks instead of polling?
 Interesting thought - the bottleneck might be in the database layer
 ```
 
-**Storage:** `10-ideas/<slug>.md` (one file per idea)
+**Storage:** `10-ideas/YYYY-MM-DD__<slug>__<SB_ID>.md` (one file per idea, with front matter)
 
 ### Decision
 
@@ -52,7 +52,7 @@ I've decided to use PostgreSQL for the new project
 Decision: we're going with the monthly subscription model
 ```
 
-**Storage:** `20-decisions/YYYY-MM-DD-<slug>.md`
+**Storage:** `20-decisions/YYYY-MM-DD__<slug>__<SB_ID>.md` (with front matter)
 
 ### Project
 
@@ -66,7 +66,7 @@ Starting a new project: Website Redesign. Goal is to modernize the UI by Q2.
 Project update: Kitchen renovation is 50% complete
 ```
 
-**Storage:** `30-projects/<slug>.md`
+**Storage:** `30-projects/YYYY-MM-DD__<slug>__<SB_ID>.md` (with front matter)
 
 ### Task
 
@@ -80,7 +80,7 @@ I need to call the insurance company about the claim
 Task: review the pull request before end of day
 ```
 
-**Destination:** OmniFocus via Mail Drop email
+**Destination:** OmniFocus via Mail Drop email (includes SB-ID in task notes for linking)
 
 ## Confidence and Clarification
 
@@ -191,19 +191,49 @@ second-brain-knowledge/
 ├── 00-inbox/           # Daily capture files
 │   ├── 2024-01-15.md
 │   └── 2024-01-16.md
-├── 10-ideas/           # Atomic idea notes
-│   ├── webhook-caching.md
-│   └── team-standup-format.md
-├── 20-decisions/       # Decision records
-│   ├── 2024-01-15-use-postgresql.md
-│   └── 2024-01-16-monthly-pricing.md
-├── 30-projects/        # Project pages
-│   └── website-redesign.md
+├── 10-ideas/           # Atomic idea notes (with front matter)
+│   ├── 2024-01-15__webhook-caching__sb-a7f3c2d.md
+│   └── 2024-01-16__team-standup-format__sb-b8e4d3f.md
+├── 20-decisions/       # Decision records (with front matter)
+│   ├── 2024-01-15__use-postgresql__sb-c9f5e4a.md
+│   └── 2024-01-16__monthly-pricing__sb-d0a6f5b.md
+├── 30-projects/        # Project pages (with front matter)
+│   └── 2024-01-10__website-redesign__sb-e1b7g6c.md
 ├── 90-receipts/        # Processing receipts (JSON Lines)
 │   └── receipts.jsonl
 └── system/             # System configuration
     └── agent-system-prompt.md
 ```
+
+## SB_ID (Canonical Identifiers)
+
+Every idea, decision, and project is assigned a unique canonical identifier (SB_ID) in the format `sb-<7-char-hex>` (e.g., `sb-a7f3c2d`).
+
+**Benefits:**
+- Stable links that survive file renames
+- Cross-reference items using wikilinks: `[[sb-a7f3c2d]]`
+- OmniFocus tasks include SB-ID for linking back to repo items
+
+## Front Matter
+
+Ideas, decisions, and projects include YAML front matter:
+
+```yaml
+---
+id: sb-a7f3c2d
+type: idea
+title: "Webhook Caching Strategy"
+created_at: 2024-01-15T10:30:00Z
+tags:
+  - caching
+  - webhooks
+---
+```
+
+This enables:
+- Better search relevance (tag matching)
+- Obsidian compatibility
+- Structured metadata for future tooling
 
 ### Syncing Changes
 

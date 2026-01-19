@@ -305,6 +305,8 @@ export class MockAgentCoreClient {
         reasoning: 'Mock classification',
         title: 'Mock title',
         content: payload.prompt,
+        intent: 'capture',
+        intent_confidence: 0.9,
         file_operations: [
           {
             operation: 'append',

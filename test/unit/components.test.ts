@@ -553,6 +553,8 @@ describe('AgentCore Client', () => {
           reasoning: 'Custom response',
           title: 'Special idea',
           content: 'Content',
+          intent: 'capture',
+          intent_confidence: 0.9,
           file_operations: [],
         },
       });

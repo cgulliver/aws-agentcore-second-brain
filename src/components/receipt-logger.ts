@@ -35,7 +35,7 @@ export interface Receipt {
   timestamp_iso: string;
   event_id: string;
   slack: SlackContext;
-  classification: Classification | 'fix' | 'clarify';
+  classification: Classification | 'fix' | 'clarify' | 'query';
   confidence: number;
   actions: ReceiptAction[];
   files: string[];
@@ -53,12 +53,12 @@ const RECEIPTS_FILE = '90-receipts/receipts.jsonl';
 /**
  * Create a receipt with all required fields
  * 
- * Validates: Requirements 15, 16, 36, 45
+ * Validates: Requirements 15, 16, 36, 45, 56 (Phase 2 Query)
  */
 export function createReceipt(
   eventId: string,
   slackContext: SlackContext,
-  classification: Classification | 'fix' | 'clarify',
+  classification: Classification | 'fix' | 'clarify' | 'query',
   confidence: number,
   actions: ReceiptAction[],
   files: string[],
@@ -69,6 +69,9 @@ export function createReceipt(
     promptCommitId?: string;
     promptSha256?: string;
     validationErrors?: string[];
+    queryHash?: string;
+    filesSearched?: number;
+    filesCited?: number;
   }
 ): Receipt {
   return {
