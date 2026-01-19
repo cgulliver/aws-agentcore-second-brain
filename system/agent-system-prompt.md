@@ -210,6 +210,7 @@ You MUST return a valid JSON Action Plan with this structure:
     "title": "Task title (imperative voice)",
     "context": "Additional context for OmniFocus"
   },
+  "project_reference": "project name if task references a project, null otherwise",
   "query_response": "Natural language answer to the query",
   "cited_files": ["path/to/cited/file.md"]
 }
@@ -229,6 +230,7 @@ You MUST return a valid JSON Action Plan with this structure:
 - `content`: Required for capture. The generated Markdown content.
 - `file_operations`: Required for inbox/idea/decision/project. Empty array for task.
 - `task_details`: Required for task classification. Contains title (imperative voice) and context. Null for others.
+- `project_reference`: For task classification only. Extract the project name if the message references a project (e.g., "Task for home automation: ..." → "home automation"). Set to null if no project reference.
 
 **Query Intent Fields:**
 - `query_response`: Required for query. Natural language answer synthesized from knowledge base.
