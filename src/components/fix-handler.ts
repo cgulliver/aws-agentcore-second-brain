@@ -175,24 +175,27 @@ function buildFixPrompt(
   classification: string,
   filePath: string
 ): string {
-  return `You are correcting a previously captured ${classification} entry.
+  return `Apply this correction to the file content below.
 
-Current file: ${filePath}
-Current content:
----
+FILE: ${filePath}
+CURRENT CONTENT:
 ${currentContent}
----
 
-User's correction instruction: ${instruction}
+CORRECTION: ${instruction}
 
-Apply the correction and return the complete updated content. Maintain the same format and structure.
-Return a valid Action Plan JSON with:
-- classification: "fix"
-- confidence: 1.0
-- reasoning: Brief explanation of the fix
-- title: "Fix applied"
-- content: The complete corrected content (not just the changes)
-- file_operations: [{ operation: "update", path: "${filePath}", content: <corrected content> }]`;
+Return ONLY a JSON object (no markdown, no explanation) with this exact structure:
+{
+  "intent": "capture",
+  "intent_confidence": 1.0,
+  "classification": "fix",
+  "confidence": 1.0,
+  "reasoning": "Applied user correction",
+  "title": "Fix applied",
+  "content": "<THE COMPLETE UPDATED FILE CONTENT HERE>",
+  "file_operations": [{"operation": "update", "path": "${filePath}", "content": "<THE COMPLETE UPDATED FILE CONTENT HERE>"}]
+}
+
+The "content" field must contain the COMPLETE updated file with the correction applied.`;
 }
 
 /**
