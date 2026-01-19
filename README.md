@@ -2,7 +2,7 @@
 
 > A personal knowledge capture system that turns Slack DMs into organized notes, decisions, and tasks.
 
-[![Tests](https://img.shields.io/badge/tests-217%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-321%20passing-brightgreen)]()
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue)]()
 [![AWS CDK](https://img.shields.io/badge/AWS%20CDK-2.x-orange)]()
 [![License](https://img.shields.io/badge/license-MIT-green)]()
@@ -30,34 +30,100 @@ Bot: ✓ Captured as decision
 
 ## How It Works
 
-```
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│  Slack DM   │────▶│   Lambda    │────▶│  AgentCore  │
-│             │     │  (Ingress)  │     │ (Classify)  │
-└─────────────┘     └─────────────┘     └─────────────┘
-                                               │
-                    ┌──────────────────────────┼──────────────────────────┐
-                    ▼                          ▼                          ▼
-             ┌─────────────┐           ┌─────────────┐           ┌─────────────┐
-             │ CodeCommit  │           │     SES     │           │   Slack     │
-             │ (Markdown)  │           │ (OmniFocus) │           │  (Reply)    │
-             └─────────────┘           └─────────────┘           └─────────────┘
+```mermaid
+flowchart TB
+    subgraph Slack["Slack"]
+        DM[("DM Message")]
+    end
+
+    subgraph Ingress["Ingress Stack"]
+        APIGW["API Gateway<br/>(mTLS)"]
+        IngressLambda["Ingress Lambda<br/>(Signature Verify)"]
+        SQS[("SQS Queue")]
+        DLQ[("Dead Letter Queue")]
+    end
+
+    subgraph Core["Core Stack"]
+        Worker["Worker Lambda"]
+        
+        subgraph DynamoDB["DynamoDB"]
+            IdempotencyTable[("Idempotency<br/>Table")]
+            ConversationTable[("Conversation<br/>Table")]
+        end
+        
+        subgraph AgentCore["Bedrock AgentCore"]
+            Runtime["Classifier Runtime<br/>(Claude + Strands)"]
+            Memory[("AgentCore Memory<br/>(Preferences)")]
+        end
+    end
+
+    subgraph Storage["Knowledge Repository"]
+        CodeCommit[("CodeCommit<br/>(Markdown Files)")]
+    end
+
+    subgraph External["External Services"]
+        SES["SES Email"]
+        OmniFocus["OmniFocus<br/>(Mail Drop)"]
+        SlackAPI["Slack API<br/>(Reply)"]
+    end
+
+    DM -->|webhook| APIGW
+    APIGW --> IngressLambda
+    IngressLambda -->|enqueue| SQS
+    SQS -->|failed| DLQ
+    SQS -->|trigger| Worker
+    
+    Worker <-->|lock/state| IdempotencyTable
+    Worker <-->|context| ConversationTable
+    Worker -->|classify| Runtime
+    Runtime <-->|learn| Memory
+    
+    Worker -->|1. commit| CodeCommit
+    Worker -->|2. task email| SES
+    SES --> OmniFocus
+    Worker -->|3. reply| SlackAPI
+    SlackAPI --> DM
+
+    style Slack fill:#4A154B,color:#fff
+    style APIGW fill:#FF9900,color:#000
+    style SQS fill:#FF9900,color:#000
+    style DLQ fill:#FF9900,color:#000
+    style Worker fill:#FF9900,color:#000
+    style IngressLambda fill:#FF9900,color:#000
+    style IdempotencyTable fill:#4053D6,color:#fff
+    style ConversationTable fill:#4053D6,color:#fff
+    style Runtime fill:#00A4A6,color:#fff
+    style Memory fill:#00A4A6,color:#fff
+    style CodeCommit fill:#FF9900,color:#000
+    style SES fill:#FF9900,color:#000
+    style SlackAPI fill:#4A154B,color:#fff
 ```
 
-1. **Ingress Lambda** receives Slack webhooks, verifies signatures, queues messages
-2. **Worker Lambda** orchestrates processing with idempotency guarantees
-3. **AgentCore Runtime** (Claude) classifies messages and generates content
-4. **Side effects** execute in order: Git commit → Email → Slack reply
+### Processing Flow
+
+1. **Ingress** - Slack webhook → API Gateway (mTLS) → Lambda (HMAC verify) → SQS
+2. **Idempotency** - Worker acquires lock in DynamoDB, prevents duplicate processing
+3. **Classification** - AgentCore Runtime (Claude) determines intent and category
+4. **Side Effects** - Execute in order with partial failure recovery:
+   - Git commit to CodeCommit (ideas, decisions, projects, inbox)
+   - Email via SES (tasks → OmniFocus)
+   - Reply via Slack API (confirmation)
+5. **Learning** - AgentCore Memory stores user preferences from corrections
 
 ## Classification
 
 | Type | Description | Example | Destination |
 |------|-------------|---------|-------------|
 | **inbox** | Quick notes, reminders | "Remember to call John" | `00-inbox/YYYY-MM-DD.md` |
-| **idea** | Insights, concepts | "What if we cached API responses?" | `10-ideas/<slug>.md` |
-| **decision** | Choices made | "Going with React for the frontend" | `20-decisions/YYYY-MM-DD-<slug>.md` |
-| **project** | Multi-step work | "Starting the Q2 marketing campaign" | `30-projects/<slug>.md` |
+| **idea** | Insights, concepts | "What if we cached API responses?" | `10-ideas/YYYY-MM-DD__<slug>__<sb-id>.md` |
+| **decision** | Choices made | "Going with React for the frontend" | `20-decisions/YYYY-MM-DD__<slug>__<sb-id>.md` |
+| **project** | Multi-step work | "Starting the Q2 marketing campaign" | `30-projects/YYYY-MM-DD__<slug>__<sb-id>.md` |
 | **task** | Actionable items | "Need to review the PR today" | OmniFocus (via email) |
+
+Ideas, decisions, and projects include:
+- **SB_ID** - Unique identifier (`sb-a7f3c2d`) for linking between notes
+- **Front Matter** - YAML metadata with id, type, title, created_at, tags
+- **Auto-extracted Tags** - 2-4 tags derived from content
 
 ## Features
 
