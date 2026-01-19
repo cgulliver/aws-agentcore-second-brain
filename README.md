@@ -31,18 +31,35 @@ This system separates **knowledge** from **execution** by design:
 
 These layers connect through a single canonical identifier (**SB_ID**) which provides continuity without coupling. Execution state doesn't live in Git. Knowledge artifacts don't depend on task state.
 
+**What this repository is:**
+- A memory and knowledge store
+- A source of truth for decisions and artifacts
+- A stable anchor for cross-tool linking
+
+**What this repository is not:**
+- A task manager
+- A priority engine
+- A personal workflow enforcer
+
 **Design mantra:** *Capture now. Link reliably. Decide intentionally.*
 
 ## Principles
 
-- **Neutral Capture** - Items captured without premature classification; human judgment applied during review
-- **One Canonical ID** - Each durable item gets an immutable SB_ID used across all tools
+- **Neutral Capture** - Items captured without premature classification (e.g., work vs personal); human judgment applied during review, not at capture time
+- **One Canonical ID** - Each durable item gets an immutable SB_ID used consistently across the repository and execution tools
 - **Durable Knowledge** - Notes, specs, and decisions live in Git and evolve over time
 - **Execution Isolation** - Task management concerns remain outside the repository
-- **Minimal Automation** - The system handles plumbing and consistency, not meaning (yet)
+- **Minimal Automation** - The system handles plumbing and consistency, not meaning
 - **Plain Text** - Markdown files in Git, not locked in a proprietary database
 - **Own Your Data** - Everything lives in your AWS account, clone it anytime
 - **Serverless** - Pay only for what you use, scales to zero when idle
+
+## How It Fits Together
+
+- Inbound sources (Slack, email, manual notes) create or reference items identified by SB_ID
+- Durable artifacts are written to the knowledge repository with minimal frontmatter and stable filenames
+- Execution tasks reference SB_IDs to maintain continuity, but execution state is not mirrored back into the repo
+- Multiple clones of the repository (Working Copy, Obsidian, local machines) are expected; automation writes are append-only to avoid conflicts
 
 ## Demo
 
