@@ -57,7 +57,7 @@ These layers connect through a single canonical identifier (**SB_ID**) which pro
 
 ## How It Fits Together
 
-- Inbound sources (Slack, email, manual notes) create or reference items identified by SB_ID
+- Inbound messages from Slack create or reference items identified by SB_ID
 - Durable artifacts are written to the knowledge repository with minimal frontmatter and stable filenames
 - Execution tasks reference SB_IDs to maintain continuity, but execution state is not mirrored back into the repo
 - Multiple clones of the repository (Working Copy, Obsidian, local machines) are expected; automation writes are append-only to avoid conflicts
