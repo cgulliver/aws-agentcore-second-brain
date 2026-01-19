@@ -82,6 +82,66 @@ Task: review the pull request before end of day
 
 **Destination:** OmniFocus via Mail Drop email (includes SB-ID in task notes for linking)
 
+## Task-Project Linking
+
+Tasks can be automatically linked to existing projects using natural language references.
+
+### How It Works
+
+When you mention a project in your task message, the agent:
+1. Detects the project reference
+2. Searches your knowledge base for matching projects
+3. Auto-links if a confident match is found (≥70% confidence)
+4. Includes the project's SB_ID in the email to OmniFocus
+
+### Supported Patterns
+
+```
+Task for <project>: <task description>
+Add to <project>: <task description>
+<project> task: <task description>
+<task description> for the <project>
+```
+
+### Examples
+
+```
+Task for home automation: Research smart home protocols
+→ Links to "Home Automation Dashboard Project" (sb-79ccaa5)
+
+Add to website redesign: Create wireframes
+→ Links to "Website Redesign" project
+
+home automation task: Order Zigbee hub
+→ Partial match links to "Home Automation Dashboard Project"
+
+Task: Buy groceries
+→ Standalone task (no project reference)
+
+Task for kitchen renovation: Get quotes
+→ Standalone task (no matching project found)
+```
+
+### Confirmation Messages
+
+When a task is linked to a project, you'll see:
+```
+Captured as task
+Task sent to OmniFocus, linked to project: Home Automation Dashboard Project (sb-79ccaa5)
+```
+
+When no project is linked:
+```
+Captured as task
+Task sent to OmniFocus: "Buy groceries"
+```
+
+### OmniFocus Integration
+
+Linked tasks include `SB-Project: sb-xxxxxxx` in the email metadata, enabling OmniFocus Automation to:
+- Automatically assign tasks to the correct project
+- Maintain bidirectional links between Second Brain and OmniFocus
+
 ## Confidence and Clarification
 
 The agent uses confidence scores to determine how certain it is about classification:
