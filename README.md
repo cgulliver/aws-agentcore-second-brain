@@ -113,7 +113,7 @@ Bot: ✓ Captured as decision
 
 1. **Ingress** - Slack webhook → API Gateway (mTLS) → Lambda (HMAC verify) → SQS
 2. **Idempotency** - Worker acquires lock in DynamoDB, prevents duplicate processing
-3. **Classification** - AgentCore Runtime (Claude) determines intent and category
+3. **Classification** - AgentCore Runtime (configurable model) determines intent and category
 4. **Side Effects** - Execute in order with partial failure recovery:
    - Git commit to CodeCommit (ideas, decisions, projects, inbox)
    - Email via SES (tasks → task manager mail drop)
