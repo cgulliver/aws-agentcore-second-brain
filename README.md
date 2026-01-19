@@ -30,73 +30,37 @@ Bot: ✓ Captured as decision
 
 ## How It Works
 
-```mermaid
-flowchart TB
-    subgraph Slack["Slack"]
-        DM[("DM Message")]
-    end
-
-    subgraph Ingress["Ingress Stack"]
-        APIGW["API Gateway<br/>(mTLS)"]
-        IngressLambda["Ingress Lambda<br/>(Signature Verify)"]
-        SQS[("SQS Queue")]
-        DLQ[("Dead Letter Queue")]
-    end
-
-    subgraph Core["Core Stack"]
-        Worker["Worker Lambda"]
-        
-        subgraph DynamoDB["DynamoDB"]
-            IdempotencyTable[("Idempotency<br/>Table")]
-            ConversationTable[("Conversation<br/>Table")]
-        end
-        
-        subgraph AgentCore["Bedrock AgentCore"]
-            Runtime["Classifier Runtime<br/>(Claude + Strands)"]
-            Memory[("AgentCore Memory<br/>(Preferences)")]
-        end
-    end
-
-    subgraph Storage["Knowledge Repository"]
-        CodeCommit[("CodeCommit<br/>(Markdown Files)")]
-    end
-
-    subgraph External["External Services"]
-        SES["SES Email"]
-        OmniFocus["OmniFocus<br/>(Mail Drop)"]
-        SlackAPI["Slack API<br/>(Reply)"]
-    end
-
-    DM -->|webhook| APIGW
-    APIGW --> IngressLambda
-    IngressLambda -->|enqueue| SQS
-    SQS -->|failed| DLQ
-    SQS -->|trigger| Worker
-    
-    Worker <-->|lock/state| IdempotencyTable
-    Worker <-->|context| ConversationTable
-    Worker -->|classify| Runtime
-    Runtime <-->|learn| Memory
-    
-    Worker -->|1. commit| CodeCommit
-    Worker -->|2. task email| SES
-    SES --> OmniFocus
-    Worker -->|3. reply| SlackAPI
-    SlackAPI --> DM
-
-    style Slack fill:#4A154B,color:#fff
-    style APIGW fill:#FF9900,color:#000
-    style SQS fill:#FF9900,color:#000
-    style DLQ fill:#FF9900,color:#000
-    style Worker fill:#FF9900,color:#000
-    style IngressLambda fill:#FF9900,color:#000
-    style IdempotencyTable fill:#4053D6,color:#fff
-    style ConversationTable fill:#4053D6,color:#fff
-    style Runtime fill:#00A4A6,color:#fff
-    style Memory fill:#00A4A6,color:#fff
-    style CodeCommit fill:#FF9900,color:#000
-    style SES fill:#FF9900,color:#000
-    style SlackAPI fill:#4A154B,color:#fff
+```
+┌─────────────┐     ┌──────────────────────────────────────────────────┐
+│   Slack     │     │                      AWS                         │
+│             │     │                                                  │
+│  ┌───────┐  │     │  ┌─────────┐    ┌─────────┐    ┌─────────────┐  │
+│  │  DM   │──┼────▶│  │ API GW  │───▶│ Ingress │───▶│  SQS Queue  │  │
+│  └───────┘  │     │  │ (mTLS)  │    │ Lambda  │    └──────┬──────┘  │
+│      ▲      │     │  └─────────┘    └─────────┘           │         │
+│      │      │     │                                       ▼         │
+│      │      │     │  ┌────────────────────────────────────────────┐ │
+│      │      │     │  │              Worker Lambda                 │ │
+│      │      │     │  │                                            │ │
+│      │      │     │  │  ┌──────────┐  ┌───────────┐  ┌─────────┐  │ │
+│      │      │     │  │  │ DynamoDB │  │ AgentCore │  │   SES   │  │ │
+│      │      │     │  │  │ (state)  │  │ (classify)│  │ (email) │  │ │
+│      │      │     │  │  └──────────┘  └───────────┘  └────┬────┘  │ │
+│      │      │     │  └────────────────────────────────────┼───────┘ │
+│      │      │     │                                       │         │
+│      │      │     │  ┌─────────────────┐                  ▼         │
+│  ┌───┴───┐  │     │  │   CodeCommit    │           ┌───────────┐   │
+│  │ Reply │◀─┼─────│  │   (Markdown)    │           │ OmniFocus │   │
+│  └───────┘  │     │  │                 │           └───────────┘   │
+└─────────────┘     │  │  ┌───────────┐  │                            │
+                    │  │  │ 00-inbox  │  │                            │
+                    │  │  │ 10-ideas  │  │◀──── git clone ────┐       │
+                    │  │  │ 20-decide │  │                    │       │
+                    │  │  │ 30-project│  │              ┌─────┴─────┐ │
+                    │  │  └───────────┘  │              │ Obsidian  │ │
+                    │  └─────────────────┘              │ or any    │ │
+                    │                                   │ git client│ │
+                    └───────────────────────────────────┴───────────┴─┘
 ```
 
 ### Processing Flow
@@ -131,6 +95,7 @@ Ideas, decisions, and projects include:
 - **Clarification Flow** - Asks when uncertain, remembers context
 - **Fix Command** - Correct mistakes with `fix: change the title to...`
 - **Git-Backed Storage** - Full history, diffable, portable Markdown
+- **Obsidian/Git Sync** - Clone the repo locally for use with Obsidian or any Markdown editor
 - **OmniFocus Integration** - Tasks go straight to your task manager
 - **Idempotent Processing** - Safe retries, exactly-once semantics
 - **Partial Failure Recovery** - Resumes from where it left off
@@ -211,6 +176,21 @@ Bot: I'm not sure how to classify this. Is this an idea, decision, or task?
 You: idea
 Bot: ✓ Captured as idea...
 ```
+
+### Sync with Obsidian
+
+The knowledge repository is a standard Git repo. Clone it locally to browse, search, and edit with Obsidian or any Markdown tool:
+
+```bash
+# Clone the knowledge repo (requires git-remote-codecommit)
+pip install git-remote-codecommit
+git clone codecommit::us-east-1://second-brain-knowledge ~/SecondBrain
+
+# Open in Obsidian as a vault
+# Point Obsidian to ~/SecondBrain
+```
+
+Your notes sync both ways - edits in Obsidian can be pushed back, and new captures from Slack appear on pull.
 
 ## Architecture
 
