@@ -62,6 +62,17 @@ These layers connect through a single canonical identifier (**SB_ID**) which pro
 - Execution tasks reference SB_IDs to maintain continuity, but execution state is not mirrored back into the repo
 - Multiple clones of the repository (Working Copy, Obsidian, local machines) are expected; automation writes are append-only to avoid conflicts
 
+### Completion and Status
+
+Task completion lives in your task manager (OmniFocus), not in the knowledge repo. When you complete a task in OmniFocus, the knowledge repo doesn't change - and that's intentional.
+
+For projects in the knowledge repo:
+- Update status manually during periodic reviews (e.g., "Status: In Progress" → "Status: Complete")
+- Or capture a decision: "I've decided to close the kitchen renovation project - it's done"
+- The repo tracks *what you thought and decided*, not *what got done*
+
+This separation means you can rebuild your task manager from scratch without losing knowledge, and your knowledge base stays clean of transient execution state.
+
 ## Demo
 
 ```
