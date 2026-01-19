@@ -7,6 +7,10 @@
 [![AWS CDK](https://img.shields.io/badge/AWS%20CDK-2.x-orange)]()
 [![License](https://img.shields.io/badge/license-MIT-green)]()
 
+## Why Second Brain?
+
+Ideas happen everywhere - in meetings, on walks, in the shower. The friction of opening an app, choosing a folder, and formatting a note means most thoughts never get captured. Second Brain removes that friction entirely.
+
 Send a message to your Slack bot, and it automatically:
 - **Classifies** your thought (inbox, idea, decision, project, or task)
 - **Stores** it in a Git repository as Markdown
@@ -14,6 +18,15 @@ Send a message to your Slack bot, and it automatically:
 - **Confirms** what it did
 
 No apps to open. No forms to fill. Just message your bot.
+
+## Principles
+
+- **Zero Friction** - Capture should be as easy as sending a text message
+- **Plain Text** - Markdown files in Git, not locked in a proprietary database
+- **Own Your Data** - Everything lives in your AWS account, clone it anytime
+- **Serverless** - Pay only for what you use, scales to zero when idle
+- **Modular** - Swap components (storage, task manager, classifier) without rewriting
+- **Extensible** - Add new classifications, integrations, or workflows
 
 ## Demo
 
@@ -194,12 +207,32 @@ Your notes sync both ways - edits in Obsidian can be pushed back, and new captur
 
 ## Architecture
 
+Second Brain is built on a fully serverless, event-driven architecture. Every component scales independently and you pay only for actual usage.
+
+### Design Principles
+
+- **Event-Driven** - SQS decouples ingress from processing, enabling retries and backpressure
+- **Idempotent** - DynamoDB conditional writes ensure exactly-once processing
+- **Recoverable** - Partial failures resume from last successful step
+- **Observable** - CloudWatch metrics and structured logging throughout
+- **Secure** - mTLS + HMAC verification, secrets in SSM Parameter Store
+
 ### Stacks
 
 | Stack | Resources |
 |-------|-----------|
 | **IngressStack** | Lambda, SQS Queue, DLQ, (mTLS modes: API Gateway, Route 53, S3 truststore) |
 | **CoreStack** | Worker Lambda, DynamoDB (2), CodeCommit, ECR, CodeBuild, AgentCore Runtime, SES |
+
+### Extensibility
+
+The modular design makes it easy to extend:
+
+- **New Classifications** - Add categories by updating the system prompt
+- **Different Storage** - Swap CodeCommit for GitHub, S3, or any Git remote
+- **Other Task Managers** - Replace SES/OmniFocus with Todoist, Things, or webhooks
+- **Additional Inputs** - Add email, SMS, or voice interfaces alongside Slack
+- **Custom Models** - Use any Bedrock model or bring your own classifier
 
 ### Security Modes
 
@@ -308,21 +341,9 @@ npx cdk diff
 - [Usage Guide](./docs/USAGE.md) - How to use effectively
 - [Troubleshooting](./docs/TROUBLESHOOTING.md) - Common issues
 
-## Cost Estimate
+## Cost
 
-For personal use (~100 messages/day):
-
-| Service | Estimated Monthly Cost |
-|---------|----------------------|
-| Lambda | ~$0 (free tier) |
-| DynamoDB | ~$0 (free tier) |
-| SQS | ~$0 (free tier) |
-| CodeCommit | ~$0 (free tier) |
-| AgentCore/Bedrock (Nova Micro) | ~$0.50 |
-| SES | ~$0.10 |
-| **Total** | **~$1/month** |
-
-*Using default Nova Micro model. Claude Haiku would be ~$5-10/month.*
+Most AWS services used fall within free tier for personal use. Primary cost is Bedrock model invocations - configurable from budget models (Nova Micro ~$0.035/1M tokens) to premium models (Claude Haiku ~$0.80/1M tokens). See [Bedrock pricing](https://aws.amazon.com/bedrock/pricing/) for details.
 
 ## Contributing
 
