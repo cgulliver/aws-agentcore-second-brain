@@ -67,11 +67,11 @@ These layers connect through a single canonical identifier (**SB_ID**) which pro
 Task completion lives in your task manager (OmniFocus), not in the knowledge repo. When you complete a task in OmniFocus, the knowledge repo doesn't change - and that's intentional.
 
 For projects in the knowledge repo:
-- Update status manually during periodic reviews (e.g., "Status: In Progress" → "Status: Complete")
-- Or capture a decision: "I've decided to close the kitchen renovation project - it's done"
+- Update status manually via Obsidian, Working Copy, or any git client
+- Or capture a decision via Slack: "I've decided to close the kitchen renovation project - it's done"
 - The repo tracks *what you thought and decided*, not *what got done*
 
-This separation means you can rebuild your task manager from scratch without losing knowledge, and your knowledge base stays clean of transient execution state.
+Manual edits to the repo are encouraged - clone it, edit in Obsidian, push changes. The automation only appends; it won't overwrite your manual updates. This separation means you can rebuild your task manager from scratch without losing knowledge, and your knowledge base stays clean of transient execution state.
 
 ## Demo
 
