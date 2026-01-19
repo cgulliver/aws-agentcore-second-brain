@@ -232,7 +232,7 @@ The knowledge repository is a standard Git repo. Clone it locally to browse, sea
 ```bash
 # Clone the knowledge repo (requires git-remote-codecommit)
 pip install git-remote-codecommit
-git clone codecommit::us-east-1://second-brain-knowledge ~/SecondBrain
+git clone codecommit::<region>://second-brain-knowledge ~/SecondBrain
 
 # Open in Obsidian as a vault
 # Point Obsidian to ~/SecondBrain

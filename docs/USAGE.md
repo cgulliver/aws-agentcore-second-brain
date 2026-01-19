@@ -240,7 +240,7 @@ This means:
 ### Clone the Repository
 
 ```bash
-git clone codecommit::us-east-1://second-brain-knowledge
+git clone codecommit::<region>://second-brain-knowledge
 cd second-brain-knowledge
 ```
 
