@@ -151,6 +151,7 @@ Ideas, decisions, and projects include:
 ### Prerequisites
 
 - Node.js 20+
+- AWS CDK CLI (`npm install -g aws-cdk`)
 - AWS CLI configured
 - Slack workspace (admin access)
 
