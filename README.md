@@ -265,10 +265,11 @@ Second Brain is built on a fully serverless, event-driven architecture. Every co
 The modular design makes it easy to extend:
 
 - **New Classifications** - Add categories by updating the system prompt
-- **Different Storage** - Swap CodeCommit for GitHub, S3, or any Git remote
 - **Other Task Managers** - Replace SES/OmniFocus with Todoist, Things, or webhooks
 - **Additional Inputs** - Add email, SMS, or voice interfaces alongside Slack
 - **Custom Models** - Use any Bedrock model or bring your own classifier
+
+Note: The current implementation uses AWS CodeCommit for the knowledge repository. Swapping to GitHub or other Git providers would require code changes to the knowledge-store component.
 
 ### Security Modes
 
