@@ -147,7 +147,7 @@ def validate_action_plan(plan: dict) -> list[str]:
             errors.append(f"Missing required field: {field}")
     
     # Classification validation
-    valid_classifications = ['inbox', 'idea', 'decision', 'project', 'task']
+    valid_classifications = ['inbox', 'idea', 'decision', 'project', 'task', 'fix']
     if 'classification' in plan and plan['classification'] not in valid_classifications:
         errors.append(f"Invalid classification: {plan['classification']}")
     
