@@ -331,7 +331,7 @@ export class CoreStack extends cdk.Stack {
     const agentMemory = new cdk.CfnResource(this, 'AgentMemory', {
       type: 'AWS::BedrockAgentCore::Memory',
       properties: {
-        Name: 'second_brain_memory',
+        Name: 'second_brain_memory_v2',
         Description: 'Memory for Second Brain agent - stores user preferences, learned patterns, and item metadata',
         EventExpiryDuration: 30, // days
         MemoryStrategies: [
