@@ -506,6 +506,30 @@ async def invoke(payload=None):
         # Include memory status in response
         memory_enabled = session_manager is not None
         
+        # Explicitly save conversation to Memory for learning
+        # The Strands session_manager doesn't auto-save single-turn invocations
+        if MEMORY_AVAILABLE and MEMORY_ID:
+            try:
+                from bedrock_agentcore.memory import MemoryClient
+                safe_session_id = session_id.replace('#', '-').replace(' ', '-')
+                
+                # Create a summary of what was classified
+                classification = action_plan.get('classification', 'unknown')
+                title = action_plan.get('title', '')
+                summary = f"Classified as {classification}: {title}"
+                
+                client = MemoryClient(region_name=AWS_REGION)
+                client.save_turn(
+                    memory_id=MEMORY_ID,
+                    actor_id=user_id,
+                    session_id=safe_session_id,
+                    user_input=user_message,
+                    agent_response=summary
+                )
+            except Exception as e:
+                # Log but don't fail - Memory is optional
+                print(f"Warning: Failed to save to Memory: {e}")
+        
         return {
             "status": "success",
             "action_plan": action_plan,
