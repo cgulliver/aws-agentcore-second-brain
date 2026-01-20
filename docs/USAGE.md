@@ -34,8 +34,9 @@ Novel concepts, insights, or observations worth capturing.
 
 **Examples:**
 ```
-I have an idea: what if we used webhooks instead of polling?
-Interesting thought - the bottleneck might be in the database layer
+Idea: what if we converted the garage into a home gym?
+Interesting thought - we could save money by meal prepping on Sundays
+What if we planned a road trip along the coast this summer?
 ```
 
 **Storage:** `10-ideas/YYYY-MM-DD__<slug>__<SB_ID>.md` (one file per idea, with front matter)
@@ -48,8 +49,9 @@ Explicit choices or commitments you've made.
 
 **Examples:**
 ```
-I've decided to use PostgreSQL for the new project
-Decision: we're going with the monthly subscription model
+I've decided to go with the blue paint for the living room
+Decision: we're doing Thanksgiving at our place this year
+I'm going with the 15-year mortgage instead of the 30-year
 ```
 
 **Storage:** `20-decisions/YYYY-MM-DD__<slug>__<SB_ID>.md` (with front matter)
@@ -62,8 +64,9 @@ Multi-step initiatives or ongoing work.
 
 **Examples:**
 ```
-Starting a new project: Website Redesign. Goal is to modernize the UI by Q2.
-Project update: Kitchen renovation is 50% complete
+New project: Kitchen Renovation. Goal is to update cabinets and countertops by spring.
+Project update: Boat engine restoration is 50% complete
+Starting a project to organize the garage
 ```
 
 **Storage:** `30-projects/YYYY-MM-DD__<slug>__<SB_ID>.md` (with front matter)
@@ -77,7 +80,8 @@ Actionable items that should go to your task manager.
 **Examples:**
 ```
 I need to call the insurance company about the claim
-Task: review the pull request before end of day
+Task: schedule the annual furnace inspection
+Don't forget to pick up the dry cleaning tomorrow
 ```
 
 **Destination:** OmniFocus via Mail Drop email (includes SB-ID in task notes for linking)
@@ -95,9 +99,9 @@ Change the status of an existing project.
 
 **Examples:**
 ```
-Home automation is complete
-Pause the kitchen renovation
-Resume the website redesign
+Kitchen renovation is complete
+Pause the garage organization
+Resume the boat engine project
 ```
 
 **Action:** Updates the project file's front matter `status` field
@@ -111,11 +115,11 @@ Update project status using natural language commands. The system tracks four st
 Simply tell the bot about the project's new state:
 
 ```
-Home automation is complete
-Pause the kitchen renovation
-Resume the website redesign
-Cancel the Q1 marketing project
-Mark second brain as on-hold
+Kitchen renovation is complete
+Pause the garage organization
+Resume the boat engine project
+Cancel the backyard deck project
+Mark garden planning as on-hold
 ```
 
 ### Status Mappings
@@ -131,14 +135,14 @@ Mark second brain as on-hold
 
 When a status update succeeds:
 ```
-Updated Home Automation Dashboard Project (sb-79ccaa5) status to complete
+Updated Kitchen Renovation (sb-79ccaa5) status to complete
 ```
 
 ### Project Matching
 
 The system uses fuzzy matching to find the right project. If multiple projects match your reference, it will ask for clarification. If no project is found, you'll see:
 ```
-Could not find a project matching "kitchen renovation"
+Could not find a project matching "backyard deck"
 ```
 
 ### Querying by Status
@@ -174,19 +178,19 @@ Add to <project>: <task description>
 ### Examples
 
 ```
-Task for home automation: Research smart home protocols
-→ Links to "Home Automation Dashboard Project" (sb-79ccaa5)
+Task for kitchen renovation: Get quotes from contractors
+→ Links to "Kitchen Renovation" project (sb-79ccaa5)
 
-Add to website redesign: Create wireframes
-→ Links to "Website Redesign" project
+Add to boat engine: Order new spark plugs
+→ Links to "Boat Engine Restoration" project
 
-home automation task: Order Zigbee hub
-→ Partial match links to "Home Automation Dashboard Project"
+garden project task: Buy tomato seedlings
+→ Partial match links to "Garden Planning" project
 
 Task: Buy groceries
 → Standalone task (no project reference)
 
-Task for kitchen renovation: Get quotes
+Task for birthday party: Order the cake
 → Standalone task (no matching project found)
 ```
 
@@ -195,7 +199,7 @@ Task for kitchen renovation: Get quotes
 When a task is linked to a project, you'll see:
 ```
 Captured as task
-Task sent to OmniFocus, linked to project: Home Automation Dashboard Project (sb-79ccaa5)
+Task sent to OmniFocus, linked to project: Kitchen Renovation (sb-79ccaa5)
 ```
 
 When no project is linked:
@@ -274,7 +278,7 @@ fix: this should have been classified as a decision
 The more context you provide, the better the classification:
 
 ❌ `meeting`
-✅ `I decided to schedule weekly team meetings on Tuesdays at 10am`
+✅ `I decided to schedule family dinners every Sunday at 6pm`
 
 ### Use Natural Language
 
@@ -296,7 +300,7 @@ For best results, send one thought at a time. However, the agent can handle mult
 Order spark plugs and clean the carburetor for the boat engine project
 → Creates 2 tasks, both linked to "Boat Engine Restoration" project
 
-I decided to use PostgreSQL and I need to set up the database
+I decided to paint the room blue and I need to buy the paint
 → Creates 1 decision + 1 task
 ```
 
@@ -339,26 +343,26 @@ Buy milk and call the dentist
 
 **Tasks with project reference (applies to ALL items):**
 ```
-Upload the code to GitHub and write the blog post for the second brain project
+Order spark plugs and clean the carburetor for the boat engine project
 → Processed 2 items:
-  • ✓ Upload code to GitHub → task (Second Brain System Project)
-  • ✓ Write the blog post → task (Second Brain System Project)
+  • ✓ Order spark plugs → task (Boat Engine Restoration)
+  • ✓ Clean the carburetor → task (Boat Engine Restoration)
 ```
 
 **Mixed classification types:**
 ```
-I decided to use PostgreSQL and I need to set up the database
+I decided to go with granite countertops and I need to get quotes from installers
 → Processed 2 items:
-  • Database Technology Decision → decision
-  • ✓ Set Up PostgreSQL Database → task
+  • Countertop Material Decision → decision
+  • ✓ Get quotes from installers → task
 ```
 
 **Multiple decisions:**
 ```
-I decided to use PostgreSQL and I decided to go with monthly billing
+I decided to paint the bedroom blue and I decided to replace the carpet with hardwood
 → Processed 2 items:
-  • Database Technology Decision → decision
-  • Billing Model Decision → decision
+  • Bedroom Paint Color Decision → decision
+  • Flooring Decision → decision
 ```
 
 ### What Gets Split
@@ -373,10 +377,10 @@ The agent splits when it detects distinct items:
 ### What Stays Together
 
 The agent keeps items together when they're logically related:
-- "research and write the report" → 1 item (sequential steps of one task)
-- "download, install, and configure the tool" → 1 item (one process)
-- "review the code and the tests" → 1 item (same verb, multiple objects)
-- "use caching with Redis and Memcached fallback" → 1 idea (one concept)
+- "research and book the vacation" → 1 item (sequential steps of one task)
+- "pack, load, and drive to the cabin" → 1 item (one process)
+- "review the contract and the addendum" → 1 item (same verb, multiple objects)
+- "plant tomatoes with basil as companion plants" → 1 idea (one concept)
 
 ### Project Reference Inheritance
 
@@ -401,7 +405,7 @@ If one item fails, the others still process. You'll see which succeeded and whic
 
 ```
 Processed 2 items:
-• ✓ Upload code → task
+• ✓ Order spark plugs → task
 • ❌ Invalid item → Failed: validation error
 1 succeeded, 1 failed
 ```
@@ -432,13 +436,13 @@ second-brain-knowledge/
 │   ├── 2024-01-15.md
 │   └── 2024-01-16.md
 ├── 10-ideas/           # Atomic idea notes (with front matter)
-│   ├── 2024-01-15__webhook-caching__sb-a7f3c2d.md
-│   └── 2024-01-16__team-standup-format__sb-b8e4d3f.md
+│   ├── 2024-01-15__garage-gym-conversion__sb-a7f3c2d.md
+│   └── 2024-01-16__sunday-meal-prep__sb-b8e4d3f.md
 ├── 20-decisions/       # Decision records (with front matter)
-│   ├── 2024-01-15__use-postgresql__sb-c9f5e4a.md
-│   └── 2024-01-16__monthly-pricing__sb-d0a6f5b.md
+│   ├── 2024-01-15__blue-paint-living-room__sb-c9f5e4a.md
+│   └── 2024-01-16__fifteen-year-mortgage__sb-d0a6f5b.md
 ├── 30-projects/        # Project pages (with front matter)
-│   └── 2024-01-10__website-redesign__sb-e1b7g6c.md
+│   └── 2024-01-10__kitchen-renovation__sb-e1b7g6c.md
 ├── 90-receipts/        # Processing receipts (JSON Lines)
 │   └── receipts.jsonl
 └── system/             # System configuration
@@ -462,11 +466,11 @@ Ideas, decisions, and projects include YAML front matter:
 ---
 id: sb-a7f3c2d
 type: idea
-title: "Webhook Caching Strategy"
+title: "Garage Gym Conversion"
 created_at: 2024-01-15T10:30:00Z
 tags:
-  - caching
-  - webhooks
+  - home
+  - fitness
 ---
 ```
 
@@ -476,12 +480,12 @@ Projects also include a `status` field:
 ---
 id: sb-b8e4d3f
 type: project
-title: "Home Automation Dashboard"
+title: "Kitchen Renovation"
 created_at: 2024-01-10T09:00:00Z
 status: active
 tags:
-  - automation
   - home
+  - renovation
 ---
 ```
 
@@ -517,8 +521,8 @@ Receipts include:
 For rapid capture, just send short notes:
 ```
 Call mom
-Check server logs
-Review PR #123
+Water the plants
+Pick up prescription
 ```
 
 These go to inbox by default.
@@ -527,16 +531,16 @@ These go to inbox by default.
 
 Force a specific classification by being explicit:
 ```
-Idea: use Redis for session storage
-Decision: going with AWS over GCP
-Project: Q2 Marketing Campaign
+Idea: convert the spare room into a home office
+Decision: going with hardwood floors instead of carpet
+Project: Plan Sarah's surprise birthday party
 ```
 
 ### Task with Context
 
 Add context to tasks for better OmniFocus entries:
 ```
-I need to review the contract from Acme Corp - they sent it yesterday and want feedback by Friday
+I need to call the insurance company about the water damage claim - they said to reference case #12345
 ```
 
 This creates a task with rich context in the note field.
@@ -546,6 +550,6 @@ This creates a task with rich context in the note field.
 Send multiple messages quickly - each is processed independently:
 ```
 Remember to water plants
-Idea: automate plant watering
-Task: buy plant watering system
+Idea: automate plant watering with drip system
+Task: buy plant watering timer
 ```
