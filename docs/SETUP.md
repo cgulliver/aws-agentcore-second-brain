@@ -328,7 +328,10 @@ AWS typically approves within 24 hours. Once approved, you can send to any recip
 ```bash
 npm install
 npm run build
-npm test
+npm test  # 416 TypeScript tests
+
+# Optional: Run Python tests for item sync module
+cd agent && python -m pytest test_item_sync.py -v  # 20 property tests
 ```
 
 ### 2. Setup Truststore (mTLS modes)

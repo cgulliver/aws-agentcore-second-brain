@@ -169,6 +169,27 @@ aws codebuild list-builds-for-project \
   --max-items 1
 ```
 
+### AgentCore Memory errors
+
+**"Item sync failed"**
+- This is logged but doesn't block classification
+- Check classifier logs for sync errors:
+```bash
+aws logs filter-log-events \
+  --log-group-name /aws/agentcore/second-brain-classifier \
+  --filter-pattern "Item sync"
+```
+
+**"Memory retrieval returned no results"**
+- Items may not be synced yet
+- Check if items exist in CodeCommit with proper front matter
+- Verify Memory namespace configuration in CDK stack
+
+**Items not linking correctly**
+1. Verify items have proper front matter (id, type, title, tags)
+2. Check that items are in the correct folders (10-ideas/, 20-decisions/, 30-projects/)
+3. Review Memory retrieval config (top_k=50, relevance_score=0.3)
+
 ## Message Processing Issues
 
 ### Messages stuck in queue
@@ -215,6 +236,24 @@ aws sqs receive-message \
 2. Review classification rules in the prompt
 3. Use the fix command to correct individual entries
 4. Consider adjusting confidence thresholds
+
+### Items not linking to projects
+
+1. **Verify project exists in Memory**
+   - Check that the project file has proper front matter
+   - Ensure the project is in `30-projects/` folder
+
+2. **Check Memory sync**
+   - Sync happens before each classification
+   - Look for "Item sync" messages in classifier logs
+
+3. **Review retrieval settings**
+   - Default: top_k=50, relevance_score=0.3
+   - Lower relevance_score if matches aren't being found
+
+4. **Test with explicit reference**
+   - Try "Task for [exact project name]: ..."
+   - If explicit works but implicit doesn't, the semantic match may be too weak
 
 ### Fix command not working
 

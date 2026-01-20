@@ -26,9 +26,35 @@ I need to review estimates with Chase, our landscaping pro. His number is 404.69
 
 The agent will:
 - Create a task: "Review estimates with Chase"
-- Link to landscaping project (implicit reference detected)
+- Link to landscaping project (detected via Memory context)
 - Preserve contact: "Chase (landscaping) - 404.695.5188"
 - Log everything to inbox and send to OmniFocus
+
+## Memory-Based Item Context
+
+The system automatically syncs your knowledge items (projects, ideas, decisions) to AgentCore Memory. This enables intelligent linking without explicit tool calls.
+
+### How It Works
+
+1. **Sync on Request**: Before classifying each message, the system syncs any new/changed items from CodeCommit to Memory
+2. **Semantic Retrieval**: When you mention a project or topic, Memory retrieves relevant items based on semantic similarity
+3. **Automatic Linking**: The classifier uses this context to populate `linked_items` in the Action Plan
+
+### What Gets Synced
+
+Items from these folders are synced to Memory:
+- `10-ideas/` - Ideas with front matter
+- `20-decisions/` - Decisions with front matter
+- `30-projects/` - Projects with front matter
+
+Each item's metadata (SB_ID, title, type, tags, status) is stored for retrieval.
+
+### Benefits
+
+- **No tool calls needed**: The LLM doesn't need to search - context is provided automatically
+- **Faster responses**: Eliminates tool call latency
+- **Better matching**: Semantic search finds related items even with different wording
+- **Incremental sync**: Only changed files are processed (efficient)
 
 ## Message Classification
 
@@ -179,13 +205,13 @@ Which projects are complete?
 
 ## Task-Project Linking
 
-Tasks can be automatically linked to existing projects using natural language references.
+Tasks can be automatically linked to existing projects using natural language references. The system uses AgentCore Memory to find matching projects from your knowledge base.
 
 ### How It Works
 
 When you mention a project in your task message, the agent:
 1. Detects the project reference (explicit or implicit)
-2. Searches your knowledge base for matching projects
+2. Retrieves matching items from AgentCore Memory (synced from CodeCommit)
 3. Auto-links if a confident match is found (≥70% confidence)
 4. Includes the project's SB_ID in the email to OmniFocus
 
@@ -199,16 +225,16 @@ Add to <project>: <task description>
 <task description> for the <project>
 ```
 
-**Implicit patterns (auto-detected):**
+**Implicit patterns (auto-detected via Memory context):**
 ```
 Call the contractor about the kitchen quote
 → Links to "Kitchen Renovation" project
 
 Review estimates with Chase, our landscaping pro
-→ Links to "Landscaping" project (detected from role)
+→ Links to "Landscaping" project (detected from context)
 
 Schedule the furnace inspection
-→ Links to "Home Maintenance" project (if exists)
+→ Links to "Home Maintenance" project (if exists in Memory)
 ```
 
 ### Examples

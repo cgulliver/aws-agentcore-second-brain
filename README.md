@@ -2,7 +2,7 @@
 
 > A personal knowledge capture system that turns Slack DMs into organized notes, decisions, and tasks.
 
-[![Tests](https://img.shields.io/badge/tests-377%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-436%20passing-brightgreen)]()
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue)]()
 [![AWS CDK](https://img.shields.io/badge/AWS%20CDK-2.x-orange)]()
 [![License](https://img.shields.io/badge/license-MIT-green)]()
@@ -128,11 +128,12 @@ Bot: Captured as decision
 1. **Ingress** - Slack webhook → API Gateway (mTLS) → Lambda (HMAC verify) → SQS
 2. **Idempotency** - Worker acquires lock in DynamoDB, prevents duplicate processing
 3. **Classification** - AgentCore Runtime (configurable model) determines intent and category
-4. **Side Effects** - Execute in order with partial failure recovery:
+4. **Item Context** - AgentCore Memory provides existing items (projects, ideas, decisions) for linking
+5. **Side Effects** - Execute in order with partial failure recovery:
    - Git commit to CodeCommit (ideas, decisions, projects, inbox)
    - Email via SES (tasks → task manager mail drop)
    - Reply via Slack API (confirmation)
-5. **Learning** - AgentCore Memory stores user preferences from corrections
+6. **Learning** - AgentCore Memory stores user preferences from corrections
 
 ## Classification
 
@@ -152,12 +153,14 @@ Ideas, decisions, and projects include:
 ## Features
 
 - **Smart Classification** - AI-powered categorization with confidence scoring
+- **Memory-Based Item Lookup** - AgentCore Memory provides item context for intelligent linking
 - **Clarification Flow** - Asks when uncertain, remembers context
 - **Fix Command** - Correct mistakes with `fix: change the title to...`
 - **Git-Backed Storage** - Full history, diffable, portable Markdown
 - **Obsidian/Git Sync** - Clone the repo locally for use with Obsidian or any Markdown editor
 - **Task Manager Integration** - Tasks emailed to any mail drop (OmniFocus, Todoist, Things, etc.)
 - **Task-Project Linking** - Automatically link tasks to projects via natural language
+- **Multi-Item Messages** - Process multiple items in a single message
 - **Project Status Management** - Update project status via Slack ("pause project X", "mark Y complete")
 - **Idempotent Processing** - Safe retries, exactly-once semantics
 - **Partial Failure Recovery** - Resumes from where it left off
@@ -321,27 +324,27 @@ Note: The current implementation uses AWS CodeCommit for the knowledge repositor
 |-----|-------------|---------|
 | `senderEmail` | SES sender address | `noreply@example.com` |
 | `securityMode` | Ingress security mode | `mtls-hmac` |
-| `classifierModel` | Bedrock model for classification | `amazon.nova-micro-v1:0` |
+| `classifierModel` | Bedrock model for classification | `amazon.nova-lite-v1:0` |
 
 ### Model Selection
 
 The classifier model can be configured at deploy time for cost/capability tradeoffs:
 
 ```bash
-# Use default (Nova Micro - cheapest)
+# Use default (Nova Lite - balanced)
 npx cdk deploy SecondBrainCoreStack
 
-# Use Claude Haiku (better quality, higher cost)
-npx cdk deploy SecondBrainCoreStack -c classifierModel=anthropic.claude-3-5-haiku-20241022-v1:0
+# Use Nova Micro (cheapest, fastest)
+npx cdk deploy SecondBrainCoreStack -c classifierModel=amazon.nova-micro-v1:0
 
-# Use Nova Lite (balanced)
-npx cdk deploy SecondBrainCoreStack -c classifierModel=amazon.nova-lite-v1:0
+# Use Claude Haiku (best quality, higher cost)
+npx cdk deploy SecondBrainCoreStack -c classifierModel=anthropic.claude-3-5-haiku-20241022-v1:0
 ```
 
 | Model | Model ID | Input/1M | Output/1M | Notes |
 |-------|----------|----------|-----------|-------|
-| Nova Micro | `amazon.nova-micro-v1:0` | $0.035 | $0.14 | Default, fastest, cheapest |
-| Nova Lite | `amazon.nova-lite-v1:0` | $0.06 | $0.24 | Good balance |
+| Nova Micro | `amazon.nova-micro-v1:0` | $0.035 | $0.14 | Fastest, cheapest |
+| Nova Lite | `amazon.nova-lite-v1:0` | $0.06 | $0.24 | Default, good balance, better multi-item detection |
 | Claude 3.5 Haiku | `anthropic.claude-3-5-haiku-20241022-v1:0` | $0.80 | $4.00 | Best quality |
 
 ### Environment Variables
@@ -355,9 +358,12 @@ npx cdk deploy SecondBrainCoreStack -c classifierModel=amazon.nova-lite-v1:0
 ### Run Tests
 
 ```bash
-npm test                          # All tests
+npm test                          # All TypeScript tests (416)
 npm test -- --run test/unit/      # Unit tests only
 npm test -- --run test/property/  # Property tests only
+
+# Python tests (20 property tests for item sync)
+cd agent && python -m pytest test_item_sync.py -v
 ```
 
 ### Synthesize CDK
