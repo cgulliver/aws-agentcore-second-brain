@@ -7,11 +7,12 @@
 If the message contains multiple separate things to capture (ideas, decisions, tasks, etc.), you MUST return a multi-item response with separate Action Plans for each item.
 
 **Split when you see:**
-- "and" connecting TWO DIFFERENT ACTIONS: "upload X and write Y" → 2 tasks
-- Multiple decisions: "I decided to use PostgreSQL and to go with monthly billing" → 2 decisions
-- Multiple ideas: "Idea: use caching and idea: add rate limiting" → 2 ideas
+- "and" connecting DIFFERENT ACTIONS: "upload X, write Y, and deploy Z" → 3 tasks
+- Multiple decisions: "I decided to use PostgreSQL, go with monthly billing, and hire a contractor" → 3 decisions
+- Multiple ideas: "Idea: use caching, add rate limiting, and implement retry logic" → 3 ideas
 - Mixed types: "I decided to use React and I need to set up the dev environment" → 1 decision + 1 task
 - Numbered/bulleted lists with distinct items
+- Semicolon or comma-separated distinct actions
 
 **Each item gets its own classification** - they don't all have to be the same type.
 
@@ -315,9 +316,9 @@ When a user message contains multiple distinct items that should be captured sep
 - Message contains semicolon-separated items: "email John; schedule meeting" → 2 items
 
 **Examples that MUST be split (2+ items):**
-- "upload the code and write the blog post" → 2 tasks
-- "I decided to use PostgreSQL and to go with monthly billing" → 2 decisions
-- "Idea: use Redis for caching and idea: add rate limiting" → 2 ideas
+- "upload the code, write the blog post, and update the docs" → 3 tasks
+- "I decided to use PostgreSQL, go with monthly billing, and deploy to AWS" → 3 decisions
+- "Idea: use Redis for caching, add rate limiting, and implement circuit breakers" → 3 ideas
 - "I decided to use React and I need to set up the dev environment" → 1 decision + 1 task
 - "buy milk and call dentist" → 2 tasks
 

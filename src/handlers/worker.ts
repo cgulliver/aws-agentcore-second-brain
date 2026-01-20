@@ -1193,7 +1193,7 @@ async function processSingleItem(
   actionPlan: ActionPlan,
   systemPrompt: { content: string; metadata: { commitId: string; sha256: string } },
   itemIndex: number
-): Promise<{ commitId?: string; filesModified?: string[] }> {
+): Promise<{ commitId?: string; filesModified?: string[]; linkedProject?: string }> {
   log('info', 'Processing multi-item item', {
     event_id: eventId,
     item_index: itemIndex,

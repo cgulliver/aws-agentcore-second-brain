@@ -173,6 +173,86 @@ function injectFrontMatter(
 }
 
 /**
+ * Generate file_operations for a plan if missing
+ * 
+ * For idea/decision/project, generates the appropriate file path and content.
+ * For tasks, returns empty array (tasks go to OmniFocus, not files).
+ */
+function ensureFileOperations(plan: ActionPlan): ActionPlan {
+  // If file_operations already exists and is an array, return as-is
+  if (Array.isArray(plan.file_operations) && plan.file_operations.length > 0) {
+    return plan;
+  }
+
+  // Tasks don't need file operations
+  if (plan.classification === 'task') {
+    return { ...plan, file_operations: [] };
+  }
+
+  // For inbox, idea, decision, project - generate file operations
+  const today = new Date().toISOString().split('T')[0];
+  const slug = (plan.title || 'untitled')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .replace(/\s+/g, '-')
+    .substring(0, 50);
+
+  let path: string;
+  let content = plan.content || `# ${plan.title}\n\n${plan.reasoning || ''}`;
+
+  switch (plan.classification) {
+    case 'inbox':
+      // Inbox appends to daily file
+      const time = new Date().toISOString().split('T')[1].substring(0, 5);
+      path = `00-inbox/${today}.md`;
+      content = `- ${time}: ${plan.content || plan.title}\n`;
+      return {
+        ...plan,
+        file_operations: [{
+          operation: 'append' as const,
+          path,
+          content,
+        }],
+      };
+
+    case 'idea':
+      path = `10-ideas/${today}__${slug}__PLACEHOLDER.md`;
+      break;
+
+    case 'decision':
+      path = `20-decisions/${today}__${slug}__PLACEHOLDER.md`;
+      break;
+
+    case 'project':
+      path = `30-projects/${today}__${slug}__PLACEHOLDER.md`;
+      break;
+
+    default:
+      // Unknown classification - default to inbox
+      path = `00-inbox/${today}.md`;
+      const defaultTime = new Date().toISOString().split('T')[1].substring(0, 5);
+      content = `- ${defaultTime}: ${plan.content || plan.title}\n`;
+      return {
+        ...plan,
+        file_operations: [{
+          operation: 'append' as const,
+          path,
+          content,
+        }],
+      };
+  }
+
+  return {
+    ...plan,
+    file_operations: [{
+      operation: 'create' as const,
+      path,
+      content,
+    }],
+  };
+}
+
+/**
  * Execute CodeCommit file operations
  * 
  * Validates: Requirements 44.1, 44a.3
@@ -181,7 +261,10 @@ async function executeCodeCommitOperations(
   config: KnowledgeStoreConfig,
   plan: ActionPlan
 ): Promise<{ commit: CommitResult | null; sbId: string | null; filePath: string | null }> {
-  if (plan.file_operations.length === 0) {
+  // Ensure file_operations exists
+  const normalizedPlan = ensureFileOperations(plan);
+  
+  if (normalizedPlan.file_operations.length === 0) {
     return { commit: null, sbId: null, filePath: null };
   }
 
@@ -189,16 +272,16 @@ async function executeCodeCommitOperations(
   let generatedSbId: string | null = null;
   let primaryFilePath: string | null = null;
 
-  for (const op of plan.file_operations) {
+  for (const op of normalizedPlan.file_operations) {
     const parentCommitId = await getLatestCommitId(config);
     
     // Inject front matter for idea/decision/project classifications
     let contentToWrite = op.content;
-    if (requiresFrontMatter(plan.classification) && op.operation === 'create') {
+    if (requiresFrontMatter(normalizedPlan.classification) && op.operation === 'create') {
       const { content: contentWithFrontMatter, sbId } = injectFrontMatter(
         op.content,
-        plan.classification,
-        plan.title
+        normalizedPlan.classification,
+        normalizedPlan.title
       );
       contentToWrite = contentWithFrontMatter;
       generatedSbId = sbId;
@@ -210,19 +293,57 @@ async function executeCodeCommitOperations(
         config,
         op.path,
         contentToWrite,
-        `${plan.classification}: ${plan.title}`
+        `${normalizedPlan.classification}: ${normalizedPlan.title}`
       );
     } else {
       lastCommit = await writeFile(
         config,
         { path: op.path, content: contentToWrite, mode: op.operation },
-        `${plan.classification}: ${plan.title}`,
+        `${normalizedPlan.classification}: ${normalizedPlan.title}`,
         parentCommitId
       );
     }
   }
 
   return { commit: lastCommit, sbId: generatedSbId, filePath: primaryFilePath };
+}
+
+/**
+ * Log task to daily inbox file
+ * 
+ * Creates an audit trail of all tasks captured, even though they're sent to OmniFocus.
+ * Format: - HH:MM: [task] <title> (Project: <project name>)
+ */
+async function logTaskToInbox(
+  config: KnowledgeStoreConfig,
+  plan: ActionPlan
+): Promise<CommitResult | null> {
+  if (plan.classification !== 'task') {
+    return null;
+  }
+
+  const now = new Date();
+  const today = now.toISOString().split('T')[0];
+  const time = now.toISOString().split('T')[1].substring(0, 5); // HH:MM
+  const inboxPath = `00-inbox/${today}.md`;
+  
+  const taskTitle = plan.task_details?.title || plan.title || 'Untitled task';
+  const projectSuffix = plan.linked_project?.title ? ` (Project: ${plan.linked_project.title})` : '';
+  const entry = `- ${time}: [task] ${taskTitle}${projectSuffix}\n`;
+
+  try {
+    const commit = await appendToFile(
+      config,
+      inboxPath,
+      entry,
+      `Log task: ${taskTitle}`
+    );
+    return commit;
+  } catch (error) {
+    // Log but don't fail - inbox logging is supplementary
+    console.warn('Failed to log task to inbox', { error });
+    return null;
+  }
 }
 
 /**
@@ -487,8 +608,9 @@ function formatConfirmationReply(
   } else if (plan.classification === 'project') {
     lines.push(`Captured as *${plan.classification}*`);
     
-    if (plan.file_operations.length > 0) {
-      const files = plan.file_operations.map((op) => op.path).join(', ');
+    const fileOps = plan.file_operations || [];
+    if (fileOps.length > 0) {
+      const files = fileOps.map((op) => op.path).join(', ');
       lines.push(`Files: ${files}`);
     }
 
@@ -505,8 +627,9 @@ function formatConfirmationReply(
   } else {
     lines.push(`Captured as *${plan.classification}*`);
     
-    if (plan.file_operations.length > 0) {
-      const files = plan.file_operations.map((op) => op.path).join(', ');
+    const fileOps = plan.file_operations || [];
+    if (fileOps.length > 0) {
+      const files = fileOps.map((op) => op.path).join(', ');
       lines.push(`Files: ${files}`);
     }
 
@@ -634,7 +757,7 @@ export async function executeActionPlan(
       actions.push({
         type: 'commit',
         status: 'success',
-        details: { commitId: commitResult?.commitId, files: plan.file_operations.map((op) => op.path) },
+        details: { commitId: commitResult?.commitId, files: (plan.file_operations || []).map((op) => op.path) },
       });
     } else {
       completedSteps.codecommit = true;
@@ -646,6 +769,16 @@ export async function executeActionPlan(
       await updateExecutionState(config.idempotency, eventId, {
         ses_status: 'IN_PROGRESS',
       });
+
+      // Log task to inbox for audit trail
+      const inboxCommit = await logTaskToInbox(config.knowledgeStore, plan);
+      if (inboxCommit) {
+        actions.push({
+          type: 'commit',
+          status: 'success',
+          details: { commitId: inboxCommit.commitId, files: [`00-inbox/${new Date().toISOString().split('T')[0]}.md`] },
+        });
+      }
 
       emailMessageId = await sendTaskEmail(config, plan);
       completedSteps.ses = true;
@@ -724,7 +857,7 @@ export async function executeActionPlan(
       plan.classification || 'inbox',
       plan.confidence,
       actions,
-      plan.file_operations.map((op) => op.path),
+      (plan.file_operations || []).map((op) => op.path),
       commitResult?.commitId || null,
       plan.title,
       {
@@ -741,7 +874,7 @@ export async function executeActionPlan(
       receiptCommitId: receiptResult.commitId,
       slackReplyTs: slackReplyTs || undefined,
       emailMessageId: emailMessageId || undefined,
-      filesModified: plan.file_operations.map((op) => op.path),
+      filesModified: (plan.file_operations || []).map((op) => op.path),
       completedSteps,
     };
   } catch (error) {

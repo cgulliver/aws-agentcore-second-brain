@@ -290,6 +290,9 @@ export function validateActionPlan(plan: unknown): ValidationResult {
     if (fileOps !== null && fileOps !== undefined && !Array.isArray(fileOps)) {
       errors.push({ field: 'file_operations', message: 'File operations must be an array or null for tasks' });
     }
+  } else if (fileOps === null || fileOps === undefined) {
+    // Allow missing file_operations - worker will generate them
+    // This handles cases where LLM doesn't include file_operations
   } else if (!Array.isArray(fileOps)) {
     errors.push({ field: 'file_operations', message: 'File operations must be an array' });
   } else {
