@@ -77,10 +77,14 @@ def create_session_manager(user_id: str, session_id: str):
         return None
     
     try:
+        # Sanitize session_id - AgentCore Memory only allows [a-zA-Z0-9][a-zA-Z0-9-_]*
+        # Replace # with - to make channel#user format valid
+        safe_session_id = session_id.replace('#', '-').replace(' ', '-')
+        
         # Configure retrieval for all namespaces
         config = AgentCoreMemoryConfig(
             memory_id=MEMORY_ID,
-            session_id=session_id,
+            session_id=safe_session_id,
             actor_id=user_id,
             retrieval_config={
                 # User preferences from fix: corrections
