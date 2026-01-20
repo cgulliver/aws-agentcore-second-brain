@@ -277,6 +277,8 @@ async function executeCodeCommitOperations(
     
     // Inject front matter for idea/decision/project classifications
     let contentToWrite = op.content;
+    let pathToWrite = op.path;
+    
     if (requiresFrontMatter(normalizedPlan.classification) && op.operation === 'create') {
       const { content: contentWithFrontMatter, sbId } = injectFrontMatter(
         op.content,
@@ -285,20 +287,23 @@ async function executeCodeCommitOperations(
       );
       contentToWrite = contentWithFrontMatter;
       generatedSbId = sbId;
-      primaryFilePath = op.path;
+      
+      // Replace PLACEHOLDER in path with actual SB_ID
+      pathToWrite = op.path.replace('PLACEHOLDER', sbId);
+      primaryFilePath = pathToWrite;
     }
 
     if (op.operation === 'append') {
       lastCommit = await appendToFile(
         config,
-        op.path,
+        pathToWrite,
         contentToWrite,
         `${normalizedPlan.classification}: ${normalizedPlan.title}`
       );
     } else {
       lastCommit = await writeFile(
         config,
-        { path: op.path, content: contentToWrite, mode: op.operation },
+        { path: pathToWrite, content: contentToWrite, mode: op.operation },
         `${normalizedPlan.classification}: ${normalizedPlan.title}`,
         parentCommitId
       );
