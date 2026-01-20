@@ -13,8 +13,8 @@
 import { SignatureV4 } from '@smithy/signature-v4';
 import { Sha256 } from '@aws-crypto/sha256-js';
 import { defaultProvider } from '@aws-sdk/credential-provider-node';
-import type { ActionPlan } from './action-plan';
-import { parseActionPlanFromLLM } from './action-plan';
+import type { ActionPlan, MultiItemResponse } from './action-plan';
+import { parseActionPlanFromLLM, isMultiItemResponse } from './action-plan';
 
 // AgentCore invocation configuration
 export interface AgentCoreConfig {
@@ -29,10 +29,11 @@ export interface InvocationPayload {
   session_id?: string;
 }
 
-// Invocation result
+// Invocation result - can be single or multi-item
 export interface InvocationResult {
   success: boolean;
   actionPlan?: ActionPlan;
+  multiItemResponse?: MultiItemResponse;
   error?: string;
   rawResponse?: string;
 }
@@ -149,7 +150,7 @@ export async function invokeAgentRuntime(
       const responseText = await response.text();
 
       // Parse the response
-      let parsedResponse: { status: string; action_plan?: ActionPlan; error?: string };
+      let parsedResponse: { status: string; action_plan?: ActionPlan | MultiItemResponse; error?: string };
       try {
         parsedResponse = JSON.parse(responseText);
       } catch {
@@ -166,9 +167,16 @@ export async function invokeAgentRuntime(
       }
 
       if (parsedResponse.status === 'success' && parsedResponse.action_plan) {
+        // Check if it's a multi-item response
+        if (isMultiItemResponse(parsedResponse.action_plan)) {
+          return {
+            success: true,
+            multiItemResponse: parsedResponse.action_plan as MultiItemResponse,
+          };
+        }
         return {
           success: true,
-          actionPlan: parsedResponse.action_plan,
+          actionPlan: parsedResponse.action_plan as ActionPlan,
         };
       }
 

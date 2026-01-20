@@ -55,6 +55,7 @@ export interface ExecutionResult {
   receiptCommitId?: string;
   slackReplyTs?: string;
   emailMessageId?: string;
+  filesModified?: string[];
   error?: string;
   validationErrors?: string[];
   completedSteps: CompletedSteps;
@@ -260,9 +261,16 @@ async function sendTaskEmail(
     bodyLines.push(taskDetails.context);
     bodyLines.push('');
   }
+  
+  // Add project info if present (for manual association in OmniFocus)
+  if (plan.linked_project?.title) {
+    bodyLines.push(`Project: ${plan.linked_project.title}`);
+    bodyLines.push('');
+  }
+  
   bodyLines.push('---');
   
-  // Add project link if present (task-project linking)
+  // Add project link metadata if present (task-project linking)
   if (plan.linked_project?.sb_id) {
     bodyLines.push(`SB-Project: ${plan.linked_project.sb_id}`);
   }
@@ -534,13 +542,16 @@ function formatErrorReply(error: string, validationErrors?: string[]): string {
  * Execute Action Plan with side effects
  * 
  * Validates: Requirements 44.1, 44.2, 44a.3, 44b.2, 44b.3, 44c.3
+ * 
+ * @param skipSlackReply - If true, skip sending Slack reply (used for multi-item processing)
  */
 export async function executeActionPlan(
   config: ExecutorConfig,
   eventId: string,
   plan: ActionPlan,
   slackContext: SlackContext,
-  promptMetadata?: SystemPromptMetadata
+  promptMetadata?: SystemPromptMetadata,
+  skipSlackReply: boolean = false
 ): Promise<ExecutionResult> {
   const completedSteps: CompletedSteps = { codecommit: false, ses: false, slack: false };
   const actions: ReceiptAction[] = [];
@@ -674,8 +685,8 @@ export async function executeActionPlan(
       actions.push({ type: 'email', status: 'skipped', details: { reason: 'already completed' } });
     }
 
-    // Step 3: Slack reply (if not already completed)
-    if (!priorSteps.slack) {
+    // Step 3: Slack reply (if not already completed and not skipped)
+    if (!priorSteps.slack && !skipSlackReply) {
       await updateExecutionState(config.idempotency, eventId, {
         slack_status: 'IN_PROGRESS',
       });
@@ -698,6 +709,9 @@ export async function executeActionPlan(
         status: 'success',
         details: { ts: slackReplyTs },
       });
+    } else if (skipSlackReply) {
+      completedSteps.slack = true;
+      actions.push({ type: 'slack_reply', status: 'skipped', details: { reason: 'multi-item processing' } });
     } else {
       completedSteps.slack = true;
       actions.push({ type: 'slack_reply', status: 'skipped', details: { reason: 'already completed' } });
@@ -727,6 +741,7 @@ export async function executeActionPlan(
       receiptCommitId: receiptResult.commitId,
       slackReplyTs: slackReplyTs || undefined,
       emailMessageId: emailMessageId || undefined,
+      filesModified: plan.file_operations.map((op) => op.path),
       completedSteps,
     };
   } catch (error) {

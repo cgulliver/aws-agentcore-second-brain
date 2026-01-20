@@ -253,22 +253,100 @@ def validate_front_matter(content: str, expected_type: str) -> list[str]:
     return errors
 
 
+def normalize_response(result: dict | list) -> dict | None:
+    """
+    Normalize the parsed JSON response.
+    
+    Handles:
+    - Single Action Plan dict -> return as-is
+    - Multi-item response with 'items' array -> return as-is
+    - Raw list of Action Plans -> wrap in { "items": [...] }
+    
+    Validates: Requirements 2.1, 2.5
+    """
+    if isinstance(result, dict):
+        # Check if it's already a multi-item response
+        if 'items' in result and isinstance(result['items'], list):
+            return result
+        # Single Action Plan
+        return result
+    
+    if isinstance(result, list):
+        if len(result) == 0:
+            return None
+        if len(result) == 1:
+            # Single item in list - unwrap
+            return result[0] if isinstance(result[0], dict) else None
+        # Multiple items - wrap in multi-item format
+        return {"items": result}
+    
+    return None
+
+
+def validate_multi_item_response(response: dict) -> tuple[bool, list[str]]:
+    """
+    Validate a multi-item response structure.
+    
+    Validates: Requirements 7.1, 7.2, 7.3, 7.4, 7.5
+    
+    Returns (is_valid, errors)
+    """
+    errors = []
+    
+    if 'items' not in response:
+        return False, ["Missing 'items' field"]
+    
+    items = response['items']
+    if not isinstance(items, list):
+        return False, ["'items' must be an array"]
+    
+    if len(items) < 2:
+        return False, ["'items' array must contain at least 2 items"]
+    
+    for i, item in enumerate(items):
+        item_errors = validate_action_plan(item)
+        for error in item_errors:
+            errors.append(f"items[{i}]: {error}")
+    
+    return len(errors) == 0, errors
+
+
+def is_multi_item_response(response: dict) -> bool:
+    """Check if response is a multi-item format."""
+    return (
+        isinstance(response, dict) and 
+        'items' in response and 
+        isinstance(response['items'], list) and 
+        len(response['items']) >= 2
+    )
+
+
 def extract_json_from_response(response_text: str) -> dict | None:
-    """Extract JSON from LLM response, handling markdown code blocks."""
-    # Try to find JSON in code blocks
+    """
+    Extract JSON from LLM response, handling markdown code blocks.
+    
+    Returns either:
+    - A single Action Plan dict (single item)
+    - A dict with 'items' array (multi-item response)
+    - None if parsing fails
+    
+    Validates: Requirements 2.1, 2.5
+    """
     import re
     
     # Look for ```json ... ``` blocks
     json_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', response_text, re.DOTALL)
     if json_match:
         try:
-            return json.loads(json_match.group(1).strip())
+            result = json.loads(json_match.group(1).strip())
+            return normalize_response(result)
         except json.JSONDecodeError:
             pass
     
     # Try to parse the entire response as JSON
     try:
-        return json.loads(response_text.strip())
+        result = json.loads(response_text.strip())
+        return normalize_response(result)
     except json.JSONDecodeError:
         pass
     
@@ -296,7 +374,9 @@ async def invoke(payload=None):
         "user_id": "Slack user_id for Memory actor_id"
     }
     
-    Returns Action Plan JSON.
+    Returns Action Plan JSON (single or multi-item format).
+    
+    Validates: Requirements 2.1, 2.2, 2.3, 2.4
     """
     try:
         if not payload:
@@ -337,7 +417,7 @@ async def invoke(payload=None):
         response = agent(user_message)
         response_text = response.message['content'][0]['text']
         
-        # Extract JSON from response
+        # Extract JSON from response (handles both single and multi-item)
         action_plan = extract_json_from_response(response_text)
         
         if not action_plan:
@@ -347,7 +427,31 @@ async def invoke(payload=None):
                 "raw_response": response_text[:500]  # Truncate for logging
             }
         
-        # Validate Action Plan
+        # Check if this is a multi-item response
+        if is_multi_item_response(action_plan):
+            # Validate multi-item response
+            is_valid, validation_errors = validate_multi_item_response(action_plan)
+            
+            if not is_valid:
+                return {
+                    "status": "error",
+                    "error": "Multi-item response validation failed",
+                    "validation_errors": validation_errors,
+                    "action_plan": action_plan
+                }
+            
+            # Include memory status in response
+            memory_enabled = session_manager is not None
+            
+            return {
+                "status": "success",
+                "action_plan": action_plan,  # Returns { "items": [...] }
+                "memory_enabled": memory_enabled,
+                "multi_item": True,
+                "item_count": len(action_plan['items']),
+            }
+        
+        # Single item - validate as before
         validation_errors = validate_action_plan(action_plan)
         
         if validation_errors:

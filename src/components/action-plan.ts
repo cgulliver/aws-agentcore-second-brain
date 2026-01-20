@@ -494,3 +494,99 @@ export function hasHighConfidence(
 ): boolean {
   return plan.confidence >= highThreshold;
 }
+
+
+// ============================================================================
+// Multi-Item Response Support
+// ============================================================================
+
+/**
+ * Multi-item response wrapper
+ * Used when the Classifier detects multiple distinct items in a message
+ */
+export interface MultiItemResponse {
+  items: ActionPlan[];
+}
+
+/**
+ * Type guard to check if response is multi-item format
+ * Returns true if response contains an `items` array with at least 2 elements
+ */
+export function isMultiItemResponse(
+  response: unknown
+): response is MultiItemResponse {
+  if (!response || typeof response !== 'object') {
+    return false;
+  }
+  const r = response as Record<string, unknown>;
+  return Array.isArray(r.items) && r.items.length >= 2;
+}
+
+/**
+ * Multi-item validation error with item index
+ */
+export interface MultiItemValidationError {
+  index: number;  // -1 for top-level errors
+  field: string;
+  message: string;
+}
+
+/**
+ * Multi-item validation result
+ */
+export interface MultiItemValidationResult {
+  valid: boolean;
+  errors: MultiItemValidationError[];
+  itemResults: ValidationResult[];
+}
+
+/**
+ * Validate a multi-item response
+ * Checks structure and validates each Action Plan independently
+ */
+export function validateMultiItemResponse(
+  response: MultiItemResponse
+): MultiItemValidationResult {
+  const errors: MultiItemValidationError[] = [];
+  const itemResults: ValidationResult[] = [];
+
+  // Check items is an array
+  if (!Array.isArray(response.items)) {
+    return {
+      valid: false,
+      errors: [{ index: -1, field: 'items', message: 'items must be an array' }],
+      itemResults: [],
+    };
+  }
+
+  // Check minimum 2 items
+  if (response.items.length < 2) {
+    return {
+      valid: false,
+      errors: [{ index: -1, field: 'items', message: 'items array must contain at least 2 items' }],
+      itemResults: [],
+    };
+  }
+
+  // Validate each item
+  for (let i = 0; i < response.items.length; i++) {
+    const itemValidation = validateActionPlan(response.items[i]);
+    itemResults.push(itemValidation);
+    
+    if (!itemValidation.valid) {
+      for (const error of itemValidation.errors) {
+        errors.push({
+          index: i,
+          field: error.field,
+          message: error.message,
+        });
+      }
+    }
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+    itemResults,
+  };
+}

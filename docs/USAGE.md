@@ -280,14 +280,125 @@ Write as you would speak:
 
 ### One Thought Per Message
 
-For best results, send one thought at a time:
+For best results, send one thought at a time. However, the agent can handle multiple items in a single message:
 
-❌ `Idea about caching, also need to call John, and decided on React`
-✅ Send three separate messages
+**Single items work best for:**
+- Complex ideas or decisions with lots of context
+- Items that need detailed explanation
+
+**Multiple items are supported:**
+```
+Order spark plugs and clean the carburetor for the boat engine project
+→ Creates 2 tasks, both linked to "Boat Engine Restoration" project
+
+I decided to use PostgreSQL and I need to set up the database
+→ Creates 1 decision + 1 task
+```
+
+See "Multi-Item Messages" section for details.
 
 ### Review Your Inbox
 
 Periodically review `00-inbox/` and promote items to ideas, decisions, or projects.
+
+## Multi-Item Messages
+
+The agent can process messages containing multiple distinct items in a single message. Items can be any classification type - tasks, decisions, ideas, or even mixed types.
+
+### How It Works
+
+When you send a message with multiple distinct items, the agent:
+1. Detects separate items (different verbs, explicit markers, etc.)
+2. Classifies each item independently
+3. Processes each item (creates files, sends emails)
+4. Sends a consolidated confirmation
+
+### Supported Patterns
+
+```
+<action1> and <action2>
+<action1> and <action2> for the <project>
+I decided <X> and I decided <Y>
+I decided <X> and I need to <Y>
+```
+
+### Examples
+
+**Two unrelated tasks:**
+```
+Buy milk and call the dentist
+→ Processed 2 items:
+  • ✓ Buy milk → task
+  • ✓ Call the dentist → task
+```
+
+**Tasks with project reference (applies to ALL items):**
+```
+Upload the code to GitHub and write the blog post for the second brain project
+→ Processed 2 items:
+  • ✓ Upload code to GitHub → task (Second Brain System Project)
+  • ✓ Write the blog post → task (Second Brain System Project)
+```
+
+**Mixed classification types:**
+```
+I decided to use PostgreSQL and I need to set up the database
+→ Processed 2 items:
+  • Database Technology Decision → decision
+  • ✓ Set Up PostgreSQL Database → task
+```
+
+**Multiple decisions:**
+```
+I decided to use PostgreSQL and I decided to go with monthly billing
+→ Processed 2 items:
+  • Database Technology Decision → decision
+  • Billing Model Decision → decision
+```
+
+### What Gets Split
+
+The agent splits when it detects distinct items:
+- Different verbs: "upload X and write Y" → 2 items
+- Multiple decisions: "I decided X and I decided Y" → 2 decisions
+- Mixed types: "I decided X and I need to Y" → 1 decision + 1 task
+- Numbered lists: "1. X 2. Y" → 2 items
+
+### What Stays Together
+
+The agent keeps items together when they're logically related:
+- "research and write the report" → 1 item (sequential steps of one task)
+- "download, install, and configure the tool" → 1 item (one process)
+- "review the code and the tests" → 1 item (same verb, multiple objects)
+- "use caching with Redis and Memcached fallback" → 1 idea (one concept)
+
+### Project Reference Inheritance
+
+When a project reference appears at the end of a multi-item message, it applies to ALL items:
+
+```
+Order spark plugs and clean the carburetor for the boat engine project
+```
+
+Both tasks get linked to "Restore an old boat engine" project.
+
+### OmniFocus Integration
+
+Each task in a multi-item message:
+- Gets sent as a separate email to OmniFocus
+- Includes the project name in the email body (for manual association)
+- Includes `SB-Project: sb-xxxxxxx` metadata for automation
+
+### Fail-Forward Processing
+
+If one item fails, the others still process. You'll see which succeeded and which failed:
+
+```
+Processed 2 items:
+• ✓ Upload code → task
+• ❌ Invalid item → Failed: validation error
+1 succeeded, 1 failed
+```
 
 ## Conversation Context
 

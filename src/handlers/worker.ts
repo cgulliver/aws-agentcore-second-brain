@@ -85,9 +85,13 @@ import {
 } from '../components/project-status-updater';
 import type { ProjectStatus } from '../components/action-plan';
 import {
+  isMultiItemResponse,
+  validateMultiItemResponse,
+  type MultiItemResponse,
+} from '../components/action-plan';
+import {
   appendTaskLog,
 } from '../components/task-logger';
-import type { ProjectStatus } from '../components/action-plan';
 import { log, redactPII } from './logging';
 import { createHash } from 'crypto';
 
@@ -224,6 +228,12 @@ async function processMessage(message: SQSEventMessage): Promise<void> {
       system_prompt: systemPrompt.content,
       session_id: `${channel_id}#${user_id}`,
     });
+
+    // Step 5.5: Check for multi-item response
+    if (agentResult.success && agentResult.multiItemResponse) {
+      await handleMultiItemMessage(event_id, slackContext, agentResult.multiItemResponse, systemPrompt);
+      return;
+    }
 
     if (!agentResult.success || !agentResult.actionPlan) {
       throw new Error(agentResult.error || 'AgentCore invocation failed');
@@ -1053,6 +1063,393 @@ async function executeAndFinalize(
     log('warn', 'Execution failed', {
       event_id: eventId,
       error: result.error,
+    });
+  }
+}
+
+// ============================================================================
+// Multi-Item Message Handling
+// ============================================================================
+
+/**
+ * Process result for a single item in a multi-item message
+ */
+interface ItemProcessingResult {
+  index: number;
+  success: boolean;
+  classification: Classification | null;
+  title: string;
+  commitId?: string;
+  filesModified?: string[];
+  error?: string;
+  linkedProject?: string; // Project title if task was linked
+}
+
+/**
+ * Get emoji for classification type
+ */
+function getClassificationEmoji(classification: Classification | null): string {
+  const emojis: Record<string, string> = {
+    inbox: '📥',
+    idea: '💡',
+    decision: '✅',
+    project: '📁',
+    task: '✓',
+  };
+  return emojis[classification || 'inbox'] || '📝';
+}
+
+/**
+ * Format consolidated confirmation message for multi-item processing
+ * 
+ * Validates: Requirements 5.1, 5.2, 5.3, 5.4
+ */
+function formatMultiItemConfirmation(results: ItemProcessingResult[]): string {
+  const lines: string[] = [`Processed ${results.length} items:`];
+  
+  for (const result of results) {
+    if (result.success) {
+      const emoji = getClassificationEmoji(result.classification);
+      const projectSuffix = result.linkedProject ? ` (${result.linkedProject})` : '';
+      lines.push(`• ${emoji} ${result.title} → ${result.classification}${projectSuffix}`);
+    } else {
+      lines.push(`• ❌ ${result.title} → Failed: ${result.error}`);
+    }
+  }
+  
+  const successCount = results.filter(r => r.success).length;
+  const failCount = results.length - successCount;
+  
+  if (failCount > 0) {
+    lines.push(`\n${successCount} succeeded, ${failCount} failed`);
+  }
+  
+  return lines.join('\n');
+}
+
+/**
+ * Create receipt for multi-item message processing
+ * 
+ * Validates: Requirements 9.1, 9.2, 9.3, 9.4, 9.5
+ */
+function createMultiItemReceipt(
+  eventId: string,
+  slackContext: SlackContext,
+  results: ItemProcessingResult[],
+  allFilesModified: string[]
+): ReturnType<typeof createReceipt> {
+  const successCount = results.filter(r => r.success).length;
+  const failCount = results.length - successCount;
+  
+  // Build summary
+  const classificationCounts: Record<string, number> = {};
+  for (const result of results) {
+    if (result.success && result.classification) {
+      classificationCounts[result.classification] = (classificationCounts[result.classification] || 0) + 1;
+    }
+  }
+  
+  const summaryParts = Object.entries(classificationCounts)
+    .map(([cls, count]) => `${count} ${cls}${count > 1 ? 's' : ''}`)
+    .join(', ');
+  
+  const summary = `Processed ${results.length} items: ${summaryParts}${failCount > 0 ? `, ${failCount} failed` : ''}`;
+  
+  // Build multi-item metadata
+  const multiItemMeta = {
+    item_count: results.length,
+    items: results.map(r => ({
+      index: r.index,
+      classification: r.classification,
+      title: r.title,
+      success: r.success,
+      error: r.error,
+    })),
+  };
+  
+  return createReceipt(
+    eventId,
+    slackContext,
+    'multi-item' as Classification, // Extended classification
+    0.9, // Confidence for multi-item
+    results.map(r => ({
+      type: r.classification === 'task' ? 'email' : 'commit',
+      status: r.success ? 'success' : 'failure',
+      details: r.success ? { commitId: r.commitId } : { error: r.error },
+    })),
+    allFilesModified,
+    null, // No single commit ID for multi-item
+    summary,
+    { multi_item: multiItemMeta }
+  );
+}
+
+/**
+ * Process a single item from a multi-item message
+ */
+async function processSingleItem(
+  eventId: string,
+  slackContext: SlackContext,
+  actionPlan: ActionPlan,
+  systemPrompt: { content: string; metadata: { commitId: string; sha256: string } },
+  itemIndex: number
+): Promise<{ commitId?: string; filesModified?: string[] }> {
+  log('info', 'Processing multi-item item', {
+    event_id: eventId,
+    item_index: itemIndex,
+    classification: actionPlan.classification,
+    title: actionPlan.title,
+    project_reference: actionPlan.project_reference,
+  });
+
+  // Task-project linking: Check for project reference in task classification
+  if (actionPlan.classification === 'task' && actionPlan.project_reference) {
+    log('info', 'Multi-item task has project reference, searching for match', {
+      event_id: eventId,
+      item_index: itemIndex,
+      project_reference: actionPlan.project_reference,
+    });
+
+    try {
+      const matchResult = await findMatchingProject(
+        projectMatcherConfig,
+        actionPlan.project_reference
+      );
+
+      log('info', 'Project match result for multi-item task', {
+        event_id: eventId,
+        item_index: itemIndex,
+        searched_count: matchResult.searchedCount,
+        best_match: matchResult.bestMatch?.sbId,
+        best_confidence: matchResult.bestMatch?.confidence,
+      });
+
+      if (matchResult.bestMatch && matchResult.bestMatch.confidence >= projectMatcherConfig.autoLinkConfidence) {
+        actionPlan.linked_project = {
+          sb_id: matchResult.bestMatch.sbId,
+          title: matchResult.bestMatch.title,
+          confidence: matchResult.bestMatch.confidence,
+        };
+      } else if (matchResult.candidates.length > 0 && matchResult.candidates[0].confidence >= projectMatcherConfig.minConfidence) {
+        actionPlan.linked_project = {
+          sb_id: matchResult.candidates[0].sbId,
+          title: matchResult.candidates[0].title,
+          confidence: matchResult.candidates[0].confidence,
+        };
+      }
+    } catch (error) {
+      log('warn', 'Project matching failed for multi-item task', {
+        event_id: eventId,
+        item_index: itemIndex,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  }
+
+  // Build executor config
+  const executorConfig: ExecutorConfig = {
+    knowledgeStore: knowledgeConfig,
+    idempotency: idempotencyConfig,
+    sesRegion: AWS_REGION,
+    slackBotTokenParam: BOT_TOKEN_PARAM,
+    mailDropParam: MAILDROP_PARAM,
+    emailMode: EMAIL_MODE === 'log-only' ? 'log' : 'live',
+    senderEmail: SES_FROM_EMAIL,
+  };
+
+  // Execute the action plan (without sending Slack reply - we'll send consolidated)
+  const result = await executeActionPlan(
+    executorConfig,
+    `${eventId}-item-${itemIndex}`, // Unique ID for this item
+    actionPlan,
+    slackContext,
+    { commitId: systemPrompt.metadata.commitId, sha256: systemPrompt.metadata.sha256, loadedAt: new Date().toISOString() },
+    true // skipSlackReply flag
+  );
+
+  if (!result.success) {
+    throw new Error(result.error || 'Item processing failed');
+  }
+
+  // Task logging: If task was linked to a project, log it in the project file
+  if (result.success && actionPlan.classification === 'task' && actionPlan.linked_project) {
+    try {
+      const taskTitle = actionPlan.task_details?.title || actionPlan.title || 'Untitled task';
+      const today = new Date().toISOString().split('T')[0];
+      
+      const matchResult = await findMatchingProject(
+        projectMatcherConfig,
+        actionPlan.linked_project.title
+      );
+      
+      if (matchResult.bestMatch) {
+        const logResult = await appendTaskLog(
+          knowledgeConfig,
+          matchResult.bestMatch.path,
+          { date: today, title: taskTitle }
+        );
+        
+        if (logResult.success) {
+          log('info', 'Multi-item task logged to project', {
+            event_id: eventId,
+            item_index: itemIndex,
+            project_sb_id: actionPlan.linked_project.sb_id,
+            task_title: taskTitle,
+            commit_id: logResult.commitId,
+          });
+        }
+      }
+    } catch (error) {
+      log('warn', 'Multi-item task logging failed', {
+        event_id: eventId,
+        item_index: itemIndex,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  }
+
+  return {
+    commitId: result.commitId,
+    filesModified: result.filesModified,
+    linkedProject: actionPlan.linked_project?.title,
+  };
+}
+
+/**
+ * Handle multi-item validation failure
+ */
+async function handleMultiItemValidationFailure(
+  eventId: string,
+  slackContext: SlackContext,
+  errors: Array<{ index: number; field: string; message: string }>
+): Promise<void> {
+  const errorMessages = errors.map(e => 
+    e.index >= 0 ? `Item ${e.index + 1}: ${e.message}` : e.message
+  );
+
+  await sendSlackReply(
+    { botTokenParam: BOT_TOKEN_PARAM },
+    {
+      channel: slackContext.channel_id,
+      text: formatErrorReply('Invalid multi-item response', errorMessages),
+      thread_ts: slackContext.thread_ts,
+    }
+  );
+
+  await markFailed(idempotencyConfig, eventId, `Multi-item validation failed: ${errorMessages.join(', ')}`);
+}
+
+/**
+ * Handle a multi-item message
+ * 
+ * Validates: Requirements 3.2, 4.1, 4.4, 4.5, 5.1, 5.2, 5.3, 5.4, 9.1-9.5
+ */
+async function handleMultiItemMessage(
+  eventId: string,
+  slackContext: SlackContext,
+  response: MultiItemResponse,
+  systemPrompt: { content: string; metadata: { commitId: string; sha256: string } }
+): Promise<void> {
+  const results: ItemProcessingResult[] = [];
+  const allFilesModified: string[] = [];
+  
+  log('info', 'Processing multi-item message', {
+    event_id: eventId,
+    item_count: response.items.length,
+  });
+
+  await updateExecutionState(idempotencyConfig, eventId, { status: 'EXECUTING' });
+
+  // Validate all items first
+  const validation = validateMultiItemResponse(response);
+  if (!validation.valid) {
+    log('warn', 'Multi-item validation failed', {
+      event_id: eventId,
+      errors: validation.errors,
+    });
+    await handleMultiItemValidationFailure(eventId, slackContext, validation.errors);
+    return;
+  }
+
+  // Process each item sequentially (fail-forward)
+  for (let i = 0; i < response.items.length; i++) {
+    const actionPlan = response.items[i];
+    
+    try {
+      const result = await processSingleItem(
+        eventId,
+        slackContext,
+        actionPlan,
+        systemPrompt,
+        i
+      );
+      
+      results.push({
+        index: i,
+        success: true,
+        classification: actionPlan.classification,
+        title: actionPlan.title || `Item ${i + 1}`,
+        commitId: result.commitId,
+        filesModified: result.filesModified,
+        linkedProject: result.linkedProject,
+      });
+      
+      if (result.filesModified) {
+        allFilesModified.push(...result.filesModified);
+      }
+    } catch (error) {
+      log('warn', 'Item processing failed', {
+        event_id: eventId,
+        item_index: i,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+      
+      results.push({
+        index: i,
+        success: false,
+        classification: actionPlan.classification,
+        title: actionPlan.title || `Item ${i + 1}`,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+      // Continue processing remaining items (fail-forward)
+    }
+  }
+
+  // Send consolidated confirmation
+  const confirmationText = formatMultiItemConfirmation(results);
+  await sendSlackReply(
+    { botTokenParam: BOT_TOKEN_PARAM },
+    {
+      channel: slackContext.channel_id,
+      text: confirmationText,
+      thread_ts: slackContext.thread_ts,
+    }
+  );
+
+  // Create consolidated receipt
+  const receipt = createMultiItemReceipt(
+    eventId,
+    slackContext,
+    results,
+    allFilesModified
+  );
+  await appendReceipt(knowledgeConfig, receipt);
+
+  // Mark as completed if at least one item succeeded
+  const anySuccess = results.some(r => r.success);
+  if (anySuccess) {
+    await markCompleted(idempotencyConfig, eventId);
+    log('info', 'Multi-item processing completed', {
+      event_id: eventId,
+      total_items: results.length,
+      successful: results.filter(r => r.success).length,
+      failed: results.filter(r => !r.success).length,
+    });
+  } else {
+    await markFailed(idempotencyConfig, eventId, 'All items failed to process');
+    log('warn', 'Multi-item processing failed - all items failed', {
+      event_id: eventId,
+      total_items: results.length,
     });
   }
 }
