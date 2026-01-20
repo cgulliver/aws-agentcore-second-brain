@@ -45,6 +45,13 @@ export interface LinkedProject {
   confidence: number;
 }
 
+// Linked item for cross-item linking (ideas, decisions, projects)
+export interface LinkedItem {
+  sb_id: string;
+  title: string;
+  confidence: number;
+}
+
 // Status update details for status_update intent
 export interface StatusUpdateDetails {
   project_reference: string;
@@ -83,6 +90,9 @@ export interface ActionPlan {
   project_reference?: string | null;
   linked_project?: LinkedProject | null;
   project_candidates?: LinkedProject[];
+  
+  // Cross-item linking (optional, for ideas/decisions/projects/tasks)
+  linked_items?: LinkedItem[];
   
   // Status update fields (for status_update intent)
   status_update?: StatusUpdateDetails;
@@ -404,6 +414,53 @@ export function validateActionPlan(plan: unknown): ValidationResult {
   if (p.project_reference !== undefined && p.project_reference !== null) {
     if (typeof p.project_reference !== 'string' || p.project_reference.length === 0) {
       errors.push({ field: 'project_reference', message: 'project_reference must be a non-empty string when present' });
+    }
+  }
+
+  // Validate linked_items array structure when present (cross-item linking)
+  // Note: Invalid items are filtered out rather than failing validation
+  // This allows the request to succeed even if the LLM puts placeholder sb_ids
+  if (p.linked_items !== undefined && p.linked_items !== null) {
+    if (!Array.isArray(p.linked_items)) {
+      errors.push({ field: 'linked_items', message: 'linked_items must be an array' });
+    } else {
+      const SB_ID_PATTERN = /^sb-[a-f0-9]{7}$/;
+      const validItems: Array<{ sb_id: string; title: string; confidence: number }> = [];
+      
+      for (let i = 0; i < p.linked_items.length; i++) {
+        const item = p.linked_items[i] as Record<string, unknown>;
+        if (typeof item !== 'object' || item === null) {
+          // Skip invalid items silently
+          continue;
+        }
+        
+        // Check if sb_id is valid
+        const sbIdValid = item.sb_id && 
+          typeof item.sb_id === 'string' && 
+          SB_ID_PATTERN.test(item.sb_id as string);
+        
+        // Check if title is valid
+        const titleValid = item.title && 
+          typeof item.title === 'string' && 
+          (item.title as string).length > 0;
+        
+        // Check if confidence is valid
+        const conf = Number(item.confidence);
+        const confValid = !isNaN(conf) && conf >= 0 && conf <= 1;
+        
+        // Only include items with valid sb_id, title, and confidence
+        if (sbIdValid && titleValid && confValid) {
+          validItems.push({
+            sb_id: item.sb_id as string,
+            title: item.title as string,
+            confidence: conf,
+          });
+        }
+        // Invalid items are silently filtered out - no error
+      }
+      
+      // Replace linked_items with only valid items
+      (p as Record<string, unknown>).linked_items = validItems;
     }
   }
 

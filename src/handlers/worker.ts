@@ -236,6 +236,13 @@ async function processMessage(message: SQSEventMessage): Promise<void> {
     }
 
     if (!agentResult.success || !agentResult.actionPlan) {
+      // Log raw response for debugging if available
+      if (agentResult.rawResponse) {
+        log('error', 'AgentCore raw response', {
+          event_id,
+          rawResponse: agentResult.rawResponse,
+        });
+      }
       throw new Error(agentResult.error || 'AgentCore invocation failed');
     }
 
@@ -249,6 +256,8 @@ async function processMessage(message: SQSEventMessage): Promise<void> {
       confidence: actionPlan.confidence,
       has_query_response: !!actionPlan.query_response,
       has_cited_files: !!actionPlan.cited_files,
+      has_linked_items: !!actionPlan.linked_items,
+      linked_items_count: actionPlan.linked_items?.length || 0,
     });
 
     // Step 6: Validate Action Plan

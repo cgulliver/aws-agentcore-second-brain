@@ -204,3 +204,52 @@ describe('22.3 IAM Permission Assertions', () => {
     }
   });
 });
+
+describe('AgentCore Memory Configuration', () => {
+  // Create a mock SQS queue for testing Core Stack independently
+  const app = new cdk.App();
+  const mockStack = new cdk.Stack(app, 'MockStack3', {
+    env: { account: '123456789012', region: 'us-east-1' },
+  });
+  const mockQueue = new sqs.Queue(mockStack, 'MockQueue3', {
+    queueName: 'mock-queue-3',
+  });
+  
+  const coreStack = new CoreStack(app, 'TestCoreStack4', {
+    env: { account: '123456789012', region: 'us-east-1' },
+    ingressQueue: mockQueue,
+  });
+  const template = Template.fromStack(coreStack);
+
+  it('should create AgentCore Memory resource', () => {
+    template.hasResourceProperties('AWS::BedrockAgentCore::Memory', {
+      Name: 'second_brain_memory',
+    });
+  });
+
+  it('should include Memory namespaces for preferences and patterns', () => {
+    template.hasResourceProperties('AWS::BedrockAgentCore::Memory', {
+      MemoryStrategies: Match.arrayWith([
+        Match.objectLike({
+          UserPreferenceMemoryStrategy: {
+            Name: 'PreferenceLearner',
+            Namespaces: ['/preferences/{actorId}'],
+          },
+        }),
+        Match.objectLike({
+          SemanticMemoryStrategy: {
+            Name: 'SemanticExtractor',
+            // Single namespace for both patterns and synced item metadata
+            Namespaces: ['/patterns/{actorId}'],
+          },
+        }),
+      ]),
+    });
+  });
+
+  it('should set EventExpiryDuration for Memory', () => {
+    template.hasResourceProperties('AWS::BedrockAgentCore::Memory', {
+      EventExpiryDuration: 30,
+    });
+  });
+});

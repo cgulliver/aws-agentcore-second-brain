@@ -40,8 +40,9 @@ import {
   searchKnowledgeBase,
   DEFAULT_SEARCH_CONFIG,
   type KnowledgeFileWithMeta,
+  parseFrontMatter,
 } from './knowledge-search';
-import type { Classification } from '../types';
+import type { Classification, LinkedItem } from '../types';
 
 // Execution configuration
 export interface ExecutorConfig {
@@ -151,12 +152,14 @@ interface SourceMetadata {
  * Inject front matter into content for idea/decision/project
  * 
  * Validates: Requirements 2.1, 2.2, 2.3, 2.5
+ * Validates: Requirements 3.1, 3.2 (cross-item linking)
  */
 function injectFrontMatter(
   content: string,
   classification: 'idea' | 'decision' | 'project',
   title: string,
-  source?: SourceMetadata
+  source?: SourceMetadata,
+  linkedItems?: LinkedItem[]
 ): { content: string; sbId: string } {
   // Generate unique SB_ID
   const sbId = generateSbId();
@@ -179,6 +182,11 @@ function injectFrontMatter(
       channel: source.channelId,
       message_ts: source.messageTs,
     };
+  }
+  
+  // Add links from linked_items (cross-item linking)
+  if (linkedItems && linkedItems.length > 0) {
+    frontMatter.links = linkedItems.map(item => `[[${item.sb_id}]]`);
   }
   
   // Generate front matter string and prepend to content
@@ -257,6 +265,134 @@ async function findRelatedByTags(
     // Don't fail the whole operation if related search fails
     console.warn('Failed to find related items', { error });
     return [];
+  }
+}
+
+/**
+ * Find a file by its SB_ID
+ * 
+ * Searches the knowledge base for a file with matching SB_ID in front matter.
+ * Returns the file path and content if found.
+ * 
+ * Validates: Requirement 4.1 (backlink creation)
+ */
+async function findFileBySbId(
+  config: KnowledgeStoreConfig,
+  sbId: string
+): Promise<{ path: string; content: string } | null> {
+  const client = new CodeCommitClient({});
+  
+  try {
+    const searchResult = await searchKnowledgeBase(client, {
+      repositoryName: config.repositoryName,
+      branchName: config.branchName,
+      maxFilesToSearch: DEFAULT_SEARCH_CONFIG.maxFilesToSearch || 50,
+      maxExcerptLength: DEFAULT_SEARCH_CONFIG.maxExcerptLength || 500,
+    });
+
+    for (const file of searchResult.files) {
+      if (file.frontMatter?.id === sbId) {
+        return {
+          path: file.path,
+          content: file.content,
+        };
+      }
+    }
+
+    return null;
+  } catch (error) {
+    console.warn('Failed to find file by SB_ID', { sbId, error });
+    return null;
+  }
+}
+
+/**
+ * Regenerate file content with updated front matter
+ * 
+ * Replaces the existing front matter with new front matter while preserving body content.
+ */
+function regenerateFileWithFrontMatter(
+  content: string,
+  newFrontMatter: FrontMatter
+): string {
+  // Find the end of existing front matter
+  if (!content.startsWith('---\n')) {
+    // No existing front matter, just prepend
+    return generateFrontMatter(newFrontMatter) + content;
+  }
+  
+  const endIndex = content.indexOf('\n---\n', 4);
+  if (endIndex === -1) {
+    // Malformed front matter, prepend new one
+    return generateFrontMatter(newFrontMatter) + content;
+  }
+  
+  // Extract body content (after the closing ---)
+  const bodyContent = content.slice(endIndex + 5); // Skip '\n---\n'
+  
+  // Generate new front matter and combine with body
+  return generateFrontMatter(newFrontMatter) + bodyContent;
+}
+
+/**
+ * Add backlinks to linked items
+ * 
+ * For each linked item, finds its file and adds a backlink to the new item.
+ * Skips duplicates and preserves existing links.
+ * Logs warnings on failures but continues processing.
+ * 
+ * Validates: Requirements 4.1, 4.2, 4.3, 4.4
+ */
+async function addBacklinks(
+  config: KnowledgeStoreConfig,
+  newItemSbId: string,
+  linkedItems: LinkedItem[]
+): Promise<void> {
+  for (const linkedItem of linkedItems) {
+    try {
+      // Find the file for this SB_ID
+      const file = await findFileBySbId(config, linkedItem.sb_id);
+      if (!file) {
+        console.warn(`Could not find file for backlink: ${linkedItem.sb_id}`);
+        continue;
+      }
+      
+      // Parse existing front matter
+      const frontMatter = parseFrontMatter(file.content);
+      if (!frontMatter) {
+        console.warn(`Could not parse front matter for: ${linkedItem.sb_id}`);
+        continue;
+      }
+      
+      // Add backlink if not already present
+      const backlink = `[[${newItemSbId}]]`;
+      const existingLinks = frontMatter.links || [];
+      if (!existingLinks.includes(backlink)) {
+        // Build updated front matter
+        const updatedFrontMatter: FrontMatter = {
+          id: frontMatter.id || linkedItem.sb_id,
+          type: (frontMatter.type as 'idea' | 'decision' | 'project') || 'idea',
+          title: frontMatter.title || linkedItem.title,
+          created_at: frontMatter.created_at || new Date().toISOString(),
+          tags: frontMatter.tags || [],
+          links: [...existingLinks, backlink],
+          updated_at: new Date().toISOString(),
+        };
+        
+        // Update the file
+        const newContent = regenerateFileWithFrontMatter(file.content, updatedFrontMatter);
+        const parentCommitId = await getLatestCommitId(config);
+        await writeFile(
+          config,
+          { path: file.path, content: newContent, mode: 'update' },
+          `Add backlink to ${linkedItem.sb_id}`,
+          parentCommitId
+        );
+      }
+    } catch (error) {
+      console.warn(`Failed to add backlink to ${linkedItem.sb_id}:`, error);
+      // Continue with other backlinks
+    }
   }
 }
 
@@ -420,13 +556,15 @@ async function executeCodeCommitOperations(
         op.content,
         normalizedPlan.classification,
         normalizedPlan.title,
-        source
+        source,
+        normalizedPlan.linked_items
       );
       contentToWrite = contentWithFrontMatter;
       generatedSbId = sbId;
       
-      // Replace PLACEHOLDER in path with actual SB_ID
-      pathToWrite = op.path.replace('PLACEHOLDER', sbId);
+      // Replace any sb-xxxxxxx placeholder pattern in path with actual SB_ID
+      // Handles: PLACEHOLDER, sb-xxxxxxx, sb-zzzzzz, or any sb-[a-z0-9]+ pattern
+      pathToWrite = op.path.replace(/(?:PLACEHOLDER|sb-[a-z0-9]+)(?=\.md$)/, sbId);
       primaryFilePath = pathToWrite;
       
       // Find and append related items by tags
@@ -453,6 +591,12 @@ async function executeCodeCommitOperations(
         `${normalizedPlan.classification}: ${normalizedPlan.title}`,
         parentCommitId
       );
+      
+      // Add backlinks to linked items after creating new item
+      // Validates: Requirement 4.1 (bidirectional linking)
+      if (generatedSbId && normalizedPlan.linked_items && normalizedPlan.linked_items.length > 0) {
+        await addBacklinks(config, generatedSbId, normalizedPlan.linked_items);
+      }
     }
   }
 
@@ -557,11 +701,25 @@ async function sendTaskEmail(
     bodyLines.push('');
   }
   
+  // Add linked items if present (cross-item linking)
+  // Validates: Requirements 8.2, 8.3, 8.4, 8.5
+  if (plan.linked_items && plan.linked_items.length > 0) {
+    const titles = plan.linked_items.map(item => item.title).join(', ');
+    bodyLines.push(`Related: ${titles}`);
+    bodyLines.push('');
+  }
+  
   bodyLines.push('---');
   
   // Add project link metadata if present (task-project linking)
   if (plan.linked_project?.sb_id) {
     bodyLines.push(`SB-Project: ${plan.linked_project.sb_id}`);
+  }
+  
+  // Add linked item SB_IDs (cross-item linking)
+  if (plan.linked_items && plan.linked_items.length > 0) {
+    const sbIds = plan.linked_items.map(item => item.sb_id).join(', ');
+    bodyLines.push(`SB-Links: ${sbIds}`);
   }
   
   bodyLines.push('SB-Source: maildrop');
@@ -753,6 +911,8 @@ async function sendSlackReply(
 
 /**
  * Format confirmation reply message
+ * 
+ * Validates: Requirements 6.1, 6.2, 6.3 (cross-item linking display)
  */
 function formatConfirmationReply(
   plan: ActionPlan,
@@ -772,6 +932,14 @@ function formatConfirmationReply(
     } else {
       lines.push(`Task sent to OmniFocus: "${taskTitle}"`);
     }
+    
+    // Show linked items if present (cross-item linking)
+    if (plan.linked_items && plan.linked_items.length > 0) {
+      const linkedText = plan.linked_items
+        .map(item => `${item.title} ([[${item.sb_id}]])`)
+        .join(', ');
+      lines.push(`Linked to: ${linkedText}`);
+    }
     // No fix hint for tasks - they're emails, not commits
   } else if (plan.classification === 'project') {
     lines.push(`Captured as *${plan.classification}*`);
@@ -789,6 +957,14 @@ function formatConfirmationReply(
     if (projectEmailSent) {
       lines.push(`Project setup task sent to OmniFocus`);
     }
+    
+    // Show linked items if present (cross-item linking)
+    if (plan.linked_items && plan.linked_items.length > 0) {
+      const linkedText = plan.linked_items
+        .map(item => `${item.title} ([[${item.sb_id}]])`)
+        .join(', ');
+      lines.push(`Linked to: ${linkedText}`);
+    }
 
     lines.push('');
     lines.push('Reply `fix: <instruction>` to correct.');
@@ -803,6 +979,14 @@ function formatConfirmationReply(
 
     if (commitId) {
       lines.push(`Commit: \`${commitId.substring(0, 7)}\``);
+    }
+    
+    // Show linked items if present (cross-item linking)
+    if (plan.linked_items && plan.linked_items.length > 0) {
+      const linkedText = plan.linked_items
+        .map(item => `${item.title} ([[${item.sb_id}]])`)
+        .join(', ');
+      lines.push(`Linked to: ${linkedText}`);
     }
 
     lines.push('');

@@ -40,7 +40,10 @@ export interface ParsedFrontMatter {
   type?: string;
   title?: string;
   created_at?: string;
+  updated_at?: string;
   tags?: string[];
+  links?: string[];
+  status?: string;
 }
 
 /**
@@ -126,7 +129,9 @@ export function parseFrontMatter(content: string): ParsedFrontMatter | null {
     // Simple YAML parsing for our known fields
     const lines = yamlBlock.split('\n');
     let inTags = false;
+    let inLinks = false;
     const tags: string[] = [];
+    const links: string[] = [];
     
     for (const line of lines) {
       if (inTags) {
@@ -138,6 +143,18 @@ export function parseFrontMatter(content: string): ParsedFrontMatter | null {
         } else {
           // End of tags array
           inTags = false;
+        }
+      }
+      
+      if (inLinks) {
+        // Check if this is a links list item
+        const linkMatch = line.match(/^\s+-\s+"?(.+?)"?$/);
+        if (linkMatch) {
+          links.push(linkMatch[1].trim().replace(/^"|"$/g, ''));
+          continue;
+        } else {
+          // End of links array
+          inLinks = false;
         }
       }
       
@@ -156,6 +173,10 @@ export function parseFrontMatter(content: string): ParsedFrontMatter | null {
           result.title = titleMatch ? titleMatch[1].replace(/\\"/g, '"') : value.trim();
         } else if (key === 'created_at') {
           result.created_at = value.trim();
+        } else if (key === 'updated_at') {
+          result.updated_at = value.trim();
+        } else if (key === 'status') {
+          result.status = value.trim();
         } else if (key === 'tags') {
           if (value.trim() === '[]') {
             // Empty array
@@ -164,12 +185,24 @@ export function parseFrontMatter(content: string): ParsedFrontMatter | null {
             // Tags on following lines
             inTags = true;
           }
+        } else if (key === 'links') {
+          if (value.trim() === '[]') {
+            // Empty array
+            result.links = [];
+          } else if (value.trim() === '') {
+            // Links on following lines
+            inLinks = true;
+          }
         }
       }
     }
     
     if (tags.length > 0) {
       result.tags = tags;
+    }
+    
+    if (links.length > 0) {
+      result.links = links;
     }
     
     return Object.keys(result).length > 0 ? result : null;

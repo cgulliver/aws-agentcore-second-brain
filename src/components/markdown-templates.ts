@@ -44,6 +44,7 @@ export interface FrontMatter {
   tags: string[];       // 2-4 extracted tags
   status?: 'active' | 'on-hold' | 'complete' | 'cancelled'; // Project status (projects only)
   source?: SourceMeta;  // Slack source metadata for traceability
+  links?: string[];     // Wiki-links to related items (e.g., ["[[sb-a7f3c2d]]"])
 }
 
 // Inbox entry structure
@@ -144,6 +145,15 @@ export function generateFrontMatter(frontMatter: FrontMatter): string {
     }
   } else {
     lines.push('tags: []');
+  }
+  
+  // Add links if present and non-empty (cross-item linking)
+  // Validates: Requirements 3.1, 3.2, 3.5
+  if (frontMatter.links && frontMatter.links.length > 0) {
+    lines.push('links:');
+    for (const link of frontMatter.links) {
+      lines.push(`  - "${link}"`);
+    }
   }
   
   // Add source metadata if present

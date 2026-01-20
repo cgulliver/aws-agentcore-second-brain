@@ -14,6 +14,19 @@ import type { Classification } from './classification';
 export type Intent = 'capture' | 'query';
 
 /**
+ * Linked item reference for cross-item linking
+ * Validates: Requirements 2.1, 2.2, 2.4
+ */
+export interface LinkedItem {
+  /** SB_ID of the linked item (e.g., "sb-a7f3c2d") */
+  sb_id: string;
+  /** Human-readable title of the linked item */
+  title: string;
+  /** Confidence score for the link match (0.0 to 1.0) */
+  confidence: number;
+}
+
+/**
  * File operation types
  */
 export type FileOperationType = 'create' | 'append' | 'update';
@@ -84,6 +97,9 @@ export interface ActionPlan {
   
   /** Canonical identifier for durable items (idea, decision, project) */
   sb_id?: string;
+  
+  /** Linked items for cross-item linking (ideas, decisions, projects, tasks) */
+  linked_items?: LinkedItem[];
 }
 
 /**
@@ -262,6 +278,45 @@ export function validateActionPlan(plan: unknown): ActionPlanValidationResult {
     }
   }
   
+  // Optional linked_items validation (cross-item linking)
+  // Validates: Requirements 2.1, 2.2, 2.4
+  if (p.linked_items !== undefined) {
+    if (!Array.isArray(p.linked_items)) {
+      errors.push('linked_items must be an array');
+    } else {
+      const SB_ID_PATTERN = /^sb-[a-f0-9]{7}$/;
+      p.linked_items.forEach((item, index) => {
+        if (typeof item !== 'object' || item === null) {
+          errors.push(`linked_items[${index}] must be an object`);
+          return;
+        }
+        
+        const linkedItem = item as Record<string, unknown>;
+        
+        // Validate sb_id format
+        if (typeof linkedItem.sb_id !== 'string') {
+          errors.push(`linked_items[${index}].sb_id must be a string`);
+        } else if (!SB_ID_PATTERN.test(linkedItem.sb_id)) {
+          errors.push(`linked_items[${index}].sb_id must match format sb-[a-f0-9]{7}`);
+        }
+        
+        // Validate title is non-empty string
+        if (typeof linkedItem.title !== 'string') {
+          errors.push(`linked_items[${index}].title must be a string`);
+        } else if (linkedItem.title.length === 0) {
+          errors.push(`linked_items[${index}].title must be non-empty`);
+        }
+        
+        // Validate confidence is number between 0 and 1
+        if (typeof linkedItem.confidence !== 'number') {
+          errors.push(`linked_items[${index}].confidence must be a number`);
+        } else if (linkedItem.confidence < 0 || linkedItem.confidence > 1) {
+          errors.push(`linked_items[${index}].confidence must be between 0.0 and 1.0`);
+        }
+      });
+    }
+  }
+  
   // Check for unexpected fields
   const expectedFields = [
     'intent',
@@ -277,6 +332,7 @@ export function validateActionPlan(plan: unknown): ActionPlanValidationResult {
     'query_response',
     'cited_files',
     'sb_id',
+    'linked_items',
   ];
   
   Object.keys(p).forEach((key) => {

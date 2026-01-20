@@ -3,14 +3,14 @@ Second Brain Classifier Agent
 
 Containerized AgentCore Runtime that classifies messages and generates Action Plans.
 Uses Strands Agents with Bedrock for LLM inference.
-Integrates with AgentCore Memory for behavioral learning (v2).
+Integrates with AgentCore Memory for behavioral learning and item context.
 
 Features:
 - Classification of messages into inbox, idea, decision, project, task
 - Multi-item message detection and splitting
 - Project reference detection (explicit and implicit)
-- use_aws tool for reading CodeCommit repository to match implicit references
-- Memory integration for caching project/contact knowledge
+- Memory integration for item context and behavioral learning
+- Programmatic sync of CodeCommit items to Memory before classification
 
 Validates: Requirements 6.3, 42.1, 58.1, 58.2
 """
@@ -20,14 +20,6 @@ import os
 from strands import Agent
 from strands.models import BedrockModel
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
-
-# use_aws tool for CodeCommit read access
-try:
-    from strands_tools import use_aws
-    USE_AWS_AVAILABLE = True
-except ImportError:
-    use_aws = None
-    USE_AWS_AVAILABLE = False
 
 # AgentCore Memory integration (Task 25.1)
 try:
@@ -43,6 +35,13 @@ try:
 except ImportError:
     MEMORY_AVAILABLE = False
 
+# Item sync module for Memory-based item lookup
+try:
+    from item_sync import ItemSyncModule
+    ITEM_SYNC_AVAILABLE = True
+except ImportError:
+    ITEM_SYNC_AVAILABLE = False
+
 app = BedrockAgentCoreApp()
 
 # Environment variables
@@ -57,14 +56,14 @@ os.environ['BYPASS_TOOL_CONSENT'] = 'true'
 
 def create_session_manager(user_id: str, session_id: str):
     """
-    Create AgentCore Memory session manager for behavioral learning.
+    Create AgentCore Memory session manager for behavioral learning and item context.
     
     Task 25.1: Configure AgentCoreMemoryConfig with memory_id from environment.
     Task 25.2: Configure retrieval for user preferences and patterns.
     
     Namespaces:
     - /preferences/{actorId}: User classification preferences (from fix: commands)
-    - /patterns/{actorId}: Learned patterns and cached knowledge from conversations
+    - /patterns/{actorId}: Learned patterns, cached knowledge, AND synced item metadata from CodeCommit
     
     Args:
         user_id: Slack user_id mapped to actor_id
@@ -92,10 +91,11 @@ def create_session_manager(user_id: str, session_id: str):
                     top_k=5,
                     relevance_score=0.7,
                 ),
-                # Learned patterns and cached knowledge (projects, contacts, facts)
+                # Learned patterns, cached knowledge, AND synced item metadata
+                # Higher top_k to ensure relevant items are found for linking
                 '/patterns/{actorId}': RetrievalConfig(
-                    top_k=15,
-                    relevance_score=0.4,
+                    top_k=50,
+                    relevance_score=0.3,
                 ),
             },
         )
@@ -115,8 +115,10 @@ def create_classifier_agent(system_prompt: str, session_manager=None) -> Agent:
     Create a classifier agent with the provided system prompt.
     
     The agent has access to:
-    - use_aws tool: For reading CodeCommit repository to find projects/contacts
-    - Memory: For caching learned knowledge about projects, contacts, preferences
+    - Memory: For item context (projects, ideas, decisions) and behavioral learning
+    
+    Note: use_aws tool has been removed. Item context is now provided via
+    Memory, which is synced programmatically before classification.
     
     Args:
         system_prompt: The system prompt defining agent behavior
@@ -131,20 +133,11 @@ def create_classifier_agent(system_prompt: str, session_manager=None) -> Agent:
         region_name=AWS_REGION,
     )
     
-    # Build tools list
-    tools = []
-    if USE_AWS_AVAILABLE and use_aws is not None:
-        tools.append(use_aws)
-    
     agent_kwargs = {
         'model': model,
         'system_prompt': system_prompt,
         'name': 'SecondBrainClassifier',
     }
-    
-    # Add tools if available
-    if tools:
-        agent_kwargs['tools'] = tools
     
     # Add session manager if Memory is available (Task 25.1)
     if session_manager:
@@ -447,6 +440,20 @@ async def invoke(payload=None):
             - content: formatted content
             - file_operations: array of file operations
             Return only valid JSON."""
+        
+        # Sync CodeCommit items to Memory before classification
+        # This ensures the LLM has up-to-date item context via Memory retrieval
+        sync_result = None
+        if ITEM_SYNC_AVAILABLE and MEMORY_AVAILABLE and MEMORY_ID:
+            try:
+                sync_module = ItemSyncModule(memory_id=MEMORY_ID, region=AWS_REGION)
+                sync_result = sync_module.sync_items(user_id)
+                if not sync_result.success:
+                    # Log but don't fail - sync is optional
+                    print(f"Warning: Item sync failed: {sync_result.error}")
+            except Exception as e:
+                # Log but don't fail - sync is optional
+                print(f"Warning: Item sync error: {e}")
         
         # Task 25.1: Create session manager for Memory integration
         session_manager = create_session_manager(user_id, session_id)

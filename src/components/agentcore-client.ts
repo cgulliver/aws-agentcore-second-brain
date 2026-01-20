@@ -40,7 +40,7 @@ export interface InvocationResult {
 
 // Confidence thresholds
 export const CONFIDENCE_THRESHOLDS = {
-  LOW: 0.7,
+  LOW: 0.5,  // Lowered from 0.7 - trust the LLM more
   HIGH: 0.85,
 };
 

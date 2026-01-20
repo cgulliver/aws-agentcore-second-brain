@@ -490,8 +490,8 @@ import {
 describe('AgentCore Client', () => {
   describe('shouldAskClarification', () => {
     it('returns true for low confidence', () => {
-      expect(shouldAskClarification(0.5, 'inbox')).toBe(true);
-      expect(shouldAskClarification(0.69, 'idea')).toBe(true);
+      expect(shouldAskClarification(0.49, 'inbox')).toBe(true);
+      expect(shouldAskClarification(0.3, 'idea')).toBe(true);
     });
 
     it('returns false for high confidence', () => {
@@ -510,7 +510,7 @@ describe('AgentCore Client', () => {
     });
 
     it('uses correct thresholds', () => {
-      expect(CONFIDENCE_THRESHOLDS.LOW).toBe(0.7);
+      expect(CONFIDENCE_THRESHOLDS.LOW).toBe(0.5);
       expect(CONFIDENCE_THRESHOLDS.HIGH).toBe(0.85);
     });
   });

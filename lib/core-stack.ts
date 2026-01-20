@@ -325,13 +325,14 @@ export class CoreStack extends cdk.Stack {
     // =========================================================================
 
     // AgentCore Memory for behavioral learning (user preferences, patterns)
-    // Note: Each strategy type can only have ONE namespace
-    // The semantic strategy extracts facts (including project/contact knowledge) into /patterns
+    // and item metadata for cross-linking
+    // Note: Only one strategy of each type is allowed, and each strategy can only have ONE namespace
+    // We use /patterns/{actorId} for both learned patterns AND synced item metadata
     const agentMemory = new cdk.CfnResource(this, 'AgentMemory', {
       type: 'AWS::BedrockAgentCore::Memory',
       properties: {
         Name: 'second_brain_memory',
-        Description: 'Memory for Second Brain agent - stores user preferences and learned patterns/knowledge',
+        Description: 'Memory for Second Brain agent - stores user preferences, learned patterns, and item metadata',
         EventExpiryDuration: 30, // days
         MemoryStrategies: [
           {
@@ -342,7 +343,8 @@ export class CoreStack extends cdk.Stack {
           },
           {
             SemanticMemoryStrategy: {
-              Name: 'PatternExtractor',
+              Name: 'SemanticExtractor',
+              // Single namespace for both learned patterns and synced item metadata
               Namespaces: ['/patterns/{actorId}'],
             },
           },
