@@ -325,11 +325,13 @@ export class CoreStack extends cdk.Stack {
     // =========================================================================
 
     // AgentCore Memory for behavioral learning (user preferences, patterns)
+    // Note: Each strategy type can only have ONE namespace
+    // The semantic strategy extracts facts (including project/contact knowledge) into /patterns
     const agentMemory = new cdk.CfnResource(this, 'AgentMemory', {
       type: 'AWS::BedrockAgentCore::Memory',
       properties: {
         Name: 'second_brain_memory',
-        Description: 'Memory for Second Brain agent - stores user preferences and learned patterns',
+        Description: 'Memory for Second Brain agent - stores user preferences and learned patterns/knowledge',
         EventExpiryDuration: 30, // days
         MemoryStrategies: [
           {
@@ -362,6 +364,23 @@ export class CoreStack extends cdk.Stack {
         resources: [
           `arn:aws:bedrock-agentcore:${this.region}:${this.account}:memory/*`,
         ],
+      })
+    );
+
+    // Grant AgentCore role read access to CodeCommit for use_aws tool
+    // This allows the classifier to read projects folder to match implicit references
+    agentCoreRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'CodeCommitRead',
+        effect: iam.Effect.ALLOW,
+        actions: [
+          'codecommit:GetFile',
+          'codecommit:GetFolder',
+          'codecommit:GetBranch',
+          'codecommit:ListRepositories',
+          'codecommit:BatchGetRepositories',
+        ],
+        resources: [this.repository.repositoryArn],
       })
     );
 

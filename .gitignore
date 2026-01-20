@@ -48,3 +48,4 @@ certs/*.pem
 !src/**/*.ts
 !test/**/*.ts
 !vitest.config.ts
+__pycache__

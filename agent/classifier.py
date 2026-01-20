@@ -5,6 +5,13 @@ Containerized AgentCore Runtime that classifies messages and generates Action Pl
 Uses Strands Agents with Bedrock for LLM inference.
 Integrates with AgentCore Memory for behavioral learning (v2).
 
+Features:
+- Classification of messages into inbox, idea, decision, project, task
+- Multi-item message detection and splitting
+- Project reference detection (explicit and implicit)
+- use_aws tool for reading CodeCommit repository to match implicit references
+- Memory integration for caching project/contact knowledge
+
 Validates: Requirements 6.3, 42.1, 58.1, 58.2
 """
 
@@ -13,6 +20,14 @@ import os
 from strands import Agent
 from strands.models import BedrockModel
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
+
+# use_aws tool for CodeCommit read access
+try:
+    from strands_tools import use_aws
+    USE_AWS_AVAILABLE = True
+except ImportError:
+    use_aws = None
+    USE_AWS_AVAILABLE = False
 
 # AgentCore Memory integration (Task 25.1)
 try:
@@ -36,13 +51,20 @@ AWS_REGION = os.getenv('AWS_DEFAULT_REGION', 'us-east-1')
 MEMORY_ID = os.getenv('MEMORY_ID', '')  # Task 31.2: Memory ID from CDK
 MODEL_ID = os.getenv('MODEL_ID', 'amazon.nova-micro-v1:0')  # Configurable model
 
+# Bypass tool consent for automated operation (no human in the loop)
+os.environ['BYPASS_TOOL_CONSENT'] = 'true'
+
 
 def create_session_manager(user_id: str, session_id: str):
     """
     Create AgentCore Memory session manager for behavioral learning.
     
     Task 25.1: Configure AgentCoreMemoryConfig with memory_id from environment.
-    Task 25.2: Configure retrieval for user preferences.
+    Task 25.2: Configure retrieval for user preferences and patterns.
+    
+    Namespaces:
+    - /preferences/{actorId}: User classification preferences (from fix: commands)
+    - /patterns/{actorId}: Learned patterns and cached knowledge from conversations
     
     Args:
         user_id: Slack user_id mapped to actor_id
@@ -55,19 +77,21 @@ def create_session_manager(user_id: str, session_id: str):
         return None
     
     try:
-        # Task 25.2: Configure retrieval for preferences namespace
+        # Configure retrieval for all namespaces
         config = AgentCoreMemoryConfig(
             memory_id=MEMORY_ID,
             session_id=session_id,
             actor_id=user_id,
             retrieval_config={
+                # User preferences from fix: corrections
                 '/preferences/{actorId}': RetrievalConfig(
                     top_k=5,
                     relevance_score=0.7,
                 ),
+                # Learned patterns and cached knowledge (projects, contacts, facts)
                 '/patterns/{actorId}': RetrievalConfig(
-                    top_k=10,
-                    relevance_score=0.5,
+                    top_k=15,
+                    relevance_score=0.4,
                 ),
             },
         )
@@ -86,6 +110,10 @@ def create_classifier_agent(system_prompt: str, session_manager=None) -> Agent:
     """
     Create a classifier agent with the provided system prompt.
     
+    The agent has access to:
+    - use_aws tool: For reading CodeCommit repository to find projects/contacts
+    - Memory: For caching learned knowledge about projects, contacts, preferences
+    
     Args:
         system_prompt: The system prompt defining agent behavior
         session_manager: Optional AgentCoreMemorySessionManager for behavioral learning
@@ -99,11 +127,20 @@ def create_classifier_agent(system_prompt: str, session_manager=None) -> Agent:
         region_name=AWS_REGION,
     )
     
+    # Build tools list
+    tools = []
+    if USE_AWS_AVAILABLE and use_aws is not None:
+        tools.append(use_aws)
+    
     agent_kwargs = {
         'model': model,
         'system_prompt': system_prompt,
         'name': 'SecondBrainClassifier',
     }
+    
+    # Add tools if available
+    if tools:
+        agent_kwargs['tools'] = tools
     
     # Add session manager if Memory is available (Task 25.1)
     if session_manager:
