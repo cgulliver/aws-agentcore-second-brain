@@ -463,7 +463,11 @@ async function executeCodeCommitOperations(
  * Log task to daily inbox file
  * 
  * Creates an audit trail of all tasks captured, even though they're sent to OmniFocus.
- * Format: - HH:MM: [task] <title> (Project: <project name>)
+ * Preserves full context - nothing gets lost.
+ * 
+ * Format:
+ * - HH:MM: [task] <title> (Project: <project name>)
+ *   > Full context preserved here
  */
 async function logTaskToInbox(
   config: KnowledgeStoreConfig,
@@ -480,7 +484,20 @@ async function logTaskToInbox(
   
   const taskTitle = plan.task_details?.title || plan.title || 'Untitled task';
   const projectSuffix = plan.linked_project?.title ? ` (Project: ${plan.linked_project.title})` : '';
-  const entry = `- ${time}: [task] ${taskTitle}${projectSuffix}\n`;
+  
+  // Build entry with full context preserved
+  const lines: string[] = [];
+  lines.push(`- ${time}: [task] ${taskTitle}${projectSuffix}`);
+  
+  // Include task context if present (contains extracted details like contacts, numbers)
+  const context = plan.task_details?.context || plan.content;
+  if (context && context !== taskTitle) {
+    // Indent context as a blockquote for readability
+    const contextLines = context.split('\n').map(line => `  > ${line}`);
+    lines.push(...contextLines);
+  }
+  
+  const entry = lines.join('\n') + '\n';
 
   try {
     const commit = await appendToFile(

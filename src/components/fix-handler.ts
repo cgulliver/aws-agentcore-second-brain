@@ -10,6 +10,9 @@ import type { KnowledgeStoreConfig, CommitResult } from './knowledge-store';
 import { readFile, writeFile, getLatestCommitId } from './knowledge-store';
 import { findMostRecentReceipt, type Receipt } from './receipt-logger';
 import { invokeAgentRuntime, type AgentCoreConfig, type InvocationPayload } from './agentcore-client';
+import { parseFrontMatter, searchKnowledgeBase, DEFAULT_SEARCH_CONFIG } from './knowledge-search';
+import { generateWikilink } from './markdown-templates';
+import { CodeCommitClient } from '@aws-sdk/client-codecommit';
 
 // Fix command parsing result
 export interface FixCommand {

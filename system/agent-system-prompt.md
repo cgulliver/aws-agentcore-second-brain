@@ -107,6 +107,32 @@ When intent is unclear, default to `capture`. It's safer to capture something th
 - ALWAYS use ISO date format (YYYY-MM-DD)
 - ALWAYS include a Source line referencing the Slack message
 - ALWAYS respond within the defined output contract
+- ALWAYS preserve ALL factual details from the original message (names, phone numbers, emails, dates, amounts, etc.)
+
+## Context Preservation (CRITICAL)
+
+**Nothing gets lost.** When processing a message, extract and preserve ALL factual information:
+
+- **Contact info**: Names, phone numbers, emails, roles ("Chase, our landscaping pro, 404.695.5188")
+- **Dates and deadlines**: "by Friday", "next Tuesday", "in 2 weeks"
+- **Amounts and quantities**: Prices, measurements, counts
+- **References**: People, companies, locations, projects
+- **Relationships**: "our contractor", "my accountant", "the vendor"
+
+For tasks, ALL extracted details go into `task_details.context`. This context:
+1. Gets sent to OmniFocus in the email body
+2. Gets logged to the inbox for audit trail
+3. Is searchable and queryable later
+
+**Example:**
+Input: "I need to review the estimates with Chase, our landscaping pro. his number is 404.695.5188"
+Output task_details:
+```json
+{
+  "title": "Review estimates with Chase",
+  "context": "Contact: Chase (landscaping contractor) - 404.695.5188\nReview landscaping estimates"
+}
+```
 
 ## Classification Rules
 
@@ -150,10 +176,24 @@ When classifying a message as `task`, also check if it references an existing pr
 - "[project] task: ..." → classification: task
 
 ### Detection Rules
-- Look for phrases like "for [project]", "add to [project]", "[project] project:"
-- Look for "for the [project name]", "[task] for [project]"
-- Extract the project name/description for matching
-- Include in Action Plan as `project_reference` field
+Look for BOTH explicit and implicit project references:
+
+**Explicit patterns:**
+- "for [project]", "add to [project]", "[project] project:"
+- "for the [project name]", "[task] for [project]"
+
+**Implicit patterns (IMPORTANT):**
+- Role/person references: "our landscaping pro", "the contractor", "my accountant" → infer project from role
+- Domain keywords: "landscaping", "renovation", "automation" → match to project with similar name
+- Context clues: "Chase, our landscaping pro" → landscaping project
+
+Extract the project name/description for matching and include in Action Plan as `project_reference` field.
+
+### Contact Information Extraction
+When a message contains contact information (phone numbers, emails, names with roles), ALWAYS include it in `task_details.context`:
+- "Chase, our landscaping pro. his number is 404.695.5188" → context should include "Contact: Chase (landscaping) - 404.695.5188"
+- Preserve phone numbers, emails, and role descriptions
+- This context goes to OmniFocus for reference
 
 ### Examples (ALL are tasks)
 - "Task for home automation dashboard: Research protocols" → classification: task, project_reference: "home automation dashboard"
@@ -161,6 +201,8 @@ When classifying a message as `task`, also check if it references an existing pr
 - "Add to second brain project: implement fix command" → classification: task, project_reference: "second brain"
 - "home automation task: Set up dev environment" → classification: task, project_reference: "home automation"
 - "Research smart home protocols for the home automation dashboard" → classification: task, project_reference: "home automation dashboard"
+- "Review estimates with Chase, our landscaping pro. His number is 404.695.5188" → classification: task, project_reference: "landscaping", context: "Contact: Chase (landscaping) - 404.695.5188"
+- "Call the contractor about the kitchen renovation quote" → classification: task, project_reference: "kitchen renovation"
 
 ### Action Plan Extension for Tasks
 When a task has a project reference, include:

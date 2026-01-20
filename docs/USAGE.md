@@ -6,8 +6,29 @@ Learn how to effectively use the Second Brain Agent to capture and organize your
 
 Send a direct message to your Slack bot. The agent will:
 1. Classify your message
-2. Store it appropriately (or send to OmniFocus for tasks)
-3. Reply with confirmation
+2. Extract and preserve all details (contacts, dates, amounts, etc.)
+3. Store it appropriately (or send to OmniFocus for tasks)
+4. Reply with confirmation
+
+## Context Preservation
+
+**Nothing gets lost.** The agent extracts and preserves all factual information from your messages:
+
+- **Contact info**: Names, phone numbers, emails, roles
+- **Dates and deadlines**: "by Friday", "next Tuesday"
+- **Amounts**: Prices, measurements, quantities
+- **Relationships**: "our contractor", "my accountant"
+
+**Example:**
+```
+I need to review estimates with Chase, our landscaping pro. His number is 404.695.5188
+```
+
+The agent will:
+- Create a task: "Review estimates with Chase"
+- Link to landscaping project (implicit reference detected)
+- Preserve contact: "Chase (landscaping) - 404.695.5188"
+- Log everything to inbox and send to OmniFocus
 
 ## Message Classification
 
@@ -86,9 +107,11 @@ Don't forget to pick up the dry cleaning tomorrow
 
 **Destination:** OmniFocus via Mail Drop email (includes SB-ID in task notes for linking)
 
-**Audit Trail:** Tasks are also logged to `00-inbox/YYYY-MM-DD.md` with format:
+**Audit Trail:** Tasks are also logged to `00-inbox/YYYY-MM-DD.md` with full context preserved:
 ```
 - HH:MM: [task] Task title (Project: Project Name)
+  > Contact: Chase (landscaping) - 404.695.5188
+  > Review landscaping estimates
 ```
 
 ### Status Update
@@ -161,18 +184,31 @@ Tasks can be automatically linked to existing projects using natural language re
 ### How It Works
 
 When you mention a project in your task message, the agent:
-1. Detects the project reference
+1. Detects the project reference (explicit or implicit)
 2. Searches your knowledge base for matching projects
 3. Auto-links if a confident match is found (≥70% confidence)
 4. Includes the project's SB_ID in the email to OmniFocus
 
 ### Supported Patterns
 
+**Explicit patterns:**
 ```
 Task for <project>: <task description>
 Add to <project>: <task description>
 <project> task: <task description>
 <task description> for the <project>
+```
+
+**Implicit patterns (auto-detected):**
+```
+Call the contractor about the kitchen quote
+→ Links to "Kitchen Renovation" project
+
+Review estimates with Chase, our landscaping pro
+→ Links to "Landscaping" project (detected from role)
+
+Schedule the furnace inspection
+→ Links to "Home Maintenance" project (if exists)
 ```
 
 ### Examples
