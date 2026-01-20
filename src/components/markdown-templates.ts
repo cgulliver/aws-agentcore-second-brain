@@ -23,6 +23,15 @@ export interface TemplateOptions {
 }
 
 /**
+ * Source metadata for traceability
+ */
+export interface SourceMeta {
+  channel: string;      // Slack channel ID
+  message_ts: string;   // Slack message timestamp
+  user?: string;        // Slack user ID (optional for privacy)
+}
+
+/**
  * Front matter structure for knowledge artifacts
  * Validates: Requirements 2.1, 2.2, 2.3
  */
@@ -31,8 +40,10 @@ export interface FrontMatter {
   type: 'idea' | 'decision' | 'project';
   title: string;        // Human-readable title
   created_at: string;   // ISO-8601 timestamp
+  updated_at?: string;  // ISO-8601 timestamp (set on fix/update)
   tags: string[];       // 2-4 extracted tags
   status?: 'active' | 'on-hold' | 'complete' | 'cancelled'; // Project status (projects only)
+  source?: SourceMeta;  // Slack source metadata for traceability
 }
 
 // Inbox entry structure
@@ -121,6 +132,11 @@ export function generateFrontMatter(frontMatter: FrontMatter): string {
   
   lines.push(`created_at: ${frontMatter.created_at}`);
   
+  // Add updated_at if present (set on fix/update operations)
+  if (frontMatter.updated_at) {
+    lines.push(`updated_at: ${frontMatter.updated_at}`);
+  }
+  
   if (frontMatter.tags.length > 0) {
     lines.push('tags:');
     for (const tag of frontMatter.tags) {
@@ -128,6 +144,13 @@ export function generateFrontMatter(frontMatter: FrontMatter): string {
     }
   } else {
     lines.push('tags: []');
+  }
+  
+  // Add source metadata if present
+  if (frontMatter.source) {
+    lines.push('source:');
+    lines.push(`  channel: ${frontMatter.source.channel}`);
+    lines.push(`  message_ts: "${frontMatter.source.message_ts}"`);
   }
   
   lines.push('---');
@@ -487,12 +510,12 @@ export function generateProjectPage(
     lines.push('');
   }
   
-  // Next Steps (optional)
+  // Next Steps (optional) - use checkbox syntax for interactive rendering
   if (project.nextSteps && project.nextSteps.length > 0) {
     lines.push('## Next Steps');
     lines.push('');
     for (const step of project.nextSteps) {
-      lines.push(`- ${sanitizeForMarkdown(step)}`);
+      lines.push(`- [ ] ${sanitizeForMarkdown(step)}`);
     }
     lines.push('');
   }

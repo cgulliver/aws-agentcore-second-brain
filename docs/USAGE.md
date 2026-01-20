@@ -471,6 +471,9 @@ created_at: 2024-01-15T10:30:00Z
 tags:
   - home
   - fitness
+source:
+  channel: D01234567
+  message_ts: "1705312200.000100"
 ---
 ```
 
@@ -486,14 +489,46 @@ status: active
 tags:
   - home
   - renovation
+source:
+  channel: D01234567
+  message_ts: "1704877200.000200"
 ---
 ```
+
+### Front Matter Fields
+
+| Field | Description |
+|-------|-------------|
+| `id` | Unique SB_ID (e.g., `sb-a7f3c2d`) |
+| `type` | Classification: idea, decision, or project |
+| `title` | Human-readable title |
+| `created_at` | ISO-8601 creation timestamp |
+| `updated_at` | ISO-8601 timestamp (added on fix/update) |
+| `status` | Project status: active, on-hold, complete, cancelled |
+| `tags` | 2-4 auto-extracted tags for discoverability |
+| `source` | Slack channel and message timestamp for traceability |
 
 This enables:
 - Better search relevance (tag matching)
 - Obsidian compatibility
 - Structured metadata for future tooling
 - Project status tracking and queries
+
+## Related Items
+
+When you create a new idea, decision, or project, the system automatically finds related items that share the same tags and adds a "Related" section:
+
+```markdown
+## Related
+
+- [[sb-a7f3c2d|Garage Gym Conversion]] (home, fitness)
+- [[sb-b8e4d3f|Home Office Setup]] (home)
+```
+
+This creates organic connections between your knowledge items without any manual linking. The related items are:
+- Found by matching auto-extracted tags
+- Limited to 5 most relevant items
+- Displayed as wikilinks with the matching tags shown
 
 ### Syncing Changes
 

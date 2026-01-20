@@ -9,6 +9,7 @@
 
 import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses';
 import { SSMClient, GetParameterCommand } from '@aws-sdk/client-ssm';
+import { CodeCommitClient } from '@aws-sdk/client-codecommit';
 import type { ActionPlan } from './action-plan';
 import { validateActionPlan } from './action-plan';
 import {
@@ -33,8 +34,13 @@ import {
 } from './receipt-logger';
 import type { SystemPromptMetadata } from './system-prompt-loader';
 import { generateSbId } from './sb-id';
-import { generateFrontMatter, type FrontMatter } from './markdown-templates';
+import { generateFrontMatter, generateWikilink, type FrontMatter } from './markdown-templates';
 import { extractTags } from './tag-extractor';
+import {
+  searchKnowledgeBase,
+  DEFAULT_SEARCH_CONFIG,
+  type KnowledgeFileWithMeta,
+} from './knowledge-search';
 import type { Classification } from '../types';
 
 // Execution configuration
@@ -134,6 +140,14 @@ function requiresFrontMatter(classification: Classification | null): classificat
 }
 
 /**
+ * Source metadata for front matter
+ */
+interface SourceMetadata {
+  channelId: string;
+  messageTs: string;
+}
+
+/**
  * Inject front matter into content for idea/decision/project
  * 
  * Validates: Requirements 2.1, 2.2, 2.3, 2.5
@@ -141,7 +155,8 @@ function requiresFrontMatter(classification: Classification | null): classificat
 function injectFrontMatter(
   content: string,
   classification: 'idea' | 'decision' | 'project',
-  title: string
+  title: string,
+  source?: SourceMetadata
 ): { content: string; sbId: string } {
   // Generate unique SB_ID
   const sbId = generateSbId();
@@ -158,6 +173,14 @@ function injectFrontMatter(
     tags,
   };
   
+  // Add source metadata if provided
+  if (source) {
+    frontMatter.source = {
+      channel: source.channelId,
+      message_ts: source.messageTs,
+    };
+  }
+  
   // Generate front matter string and prepend to content
   const frontMatterStr = generateFrontMatter(frontMatter);
   
@@ -170,6 +193,112 @@ function injectFrontMatter(
     content: frontMatterStr + content,
     sbId,
   };
+}
+
+/**
+ * Find related items by matching tags
+ * 
+ * Searches the knowledge base for items that share tags with the new item.
+ * Returns up to 5 related items, sorted by number of matching tags.
+ */
+async function findRelatedByTags(
+  config: KnowledgeStoreConfig,
+  tags: string[],
+  excludePath?: string
+): Promise<Array<{ sbId: string; title: string; matchingTags: string[] }>> {
+  if (tags.length === 0) {
+    return [];
+  }
+
+  const client = new CodeCommitClient({});
+  
+  try {
+    const searchResult = await searchKnowledgeBase(client, {
+      repositoryName: config.repositoryName,
+      branchName: config.branchName,
+      maxFilesToSearch: DEFAULT_SEARCH_CONFIG.maxFilesToSearch || 50,
+      maxExcerptLength: DEFAULT_SEARCH_CONFIG.maxExcerptLength || 500,
+    });
+
+    const tagsLower = tags.map(t => t.toLowerCase());
+    const related: Array<{ sbId: string; title: string; matchingTags: string[]; score: number }> = [];
+
+    for (const file of searchResult.files) {
+      // Skip the file we're creating
+      if (excludePath && file.path === excludePath) {
+        continue;
+      }
+
+      // Must have front matter with id and tags
+      if (!file.frontMatter?.id || !file.frontMatter?.tags || !file.frontMatter?.title) {
+        continue;
+      }
+
+      // Find matching tags
+      const fileTags = file.frontMatter.tags.map(t => t.toLowerCase());
+      const matchingTags = tags.filter(t => fileTags.includes(t.toLowerCase()));
+
+      if (matchingTags.length > 0) {
+        related.push({
+          sbId: file.frontMatter.id,
+          title: file.frontMatter.title,
+          matchingTags,
+          score: matchingTags.length,
+        });
+      }
+    }
+
+    // Sort by number of matching tags (descending), take top 5
+    return related
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 5)
+      .map(({ sbId, title, matchingTags }) => ({ sbId, title, matchingTags }));
+  } catch (error) {
+    // Don't fail the whole operation if related search fails
+    console.warn('Failed to find related items', { error });
+    return [];
+  }
+}
+
+/**
+ * Append related items section to content
+ * 
+ * Adds a "Related" section before the Source line with wikilinks to related items.
+ */
+function appendRelatedSection(
+  content: string,
+  related: Array<{ sbId: string; title: string; matchingTags: string[] }>
+): string {
+  if (related.length === 0) {
+    return content;
+  }
+
+  // Find the Source line (usually at the end after ---)
+  const sourceMatch = content.match(/\n---\nSource:/);
+  
+  const relatedLines: string[] = [
+    '',
+    '## Related',
+    '',
+  ];
+
+  for (const item of related) {
+    const wikilink = generateWikilink(item.sbId, item.title);
+    const tagList = item.matchingTags.join(', ');
+    relatedLines.push(`- ${wikilink} (${tagList})`);
+  }
+
+  relatedLines.push('');
+
+  if (sourceMatch && sourceMatch.index !== undefined) {
+    // Insert before the --- Source line
+    const beforeSource = content.slice(0, sourceMatch.index);
+    const sourceAndAfter = content.slice(sourceMatch.index);
+    return beforeSource + relatedLines.join('\n') + sourceAndAfter;
+  } else {
+    // No source line found, append at end
+    return content + relatedLines.join('\n');
+  }
 }
 
 /**
@@ -259,7 +388,8 @@ function ensureFileOperations(plan: ActionPlan): ActionPlan {
  */
 async function executeCodeCommitOperations(
   config: KnowledgeStoreConfig,
-  plan: ActionPlan
+  plan: ActionPlan,
+  slackContext?: SlackContext
 ): Promise<{ commit: CommitResult | null; sbId: string | null; filePath: string | null }> {
   // Ensure file_operations exists
   const normalizedPlan = ensureFileOperations(plan);
@@ -280,10 +410,17 @@ async function executeCodeCommitOperations(
     let pathToWrite = op.path;
     
     if (requiresFrontMatter(normalizedPlan.classification) && op.operation === 'create') {
+      // Build source metadata from slack context
+      const source = slackContext ? {
+        channelId: slackContext.channel_id,
+        messageTs: slackContext.message_ts,
+      } : undefined;
+      
       const { content: contentWithFrontMatter, sbId } = injectFrontMatter(
         op.content,
         normalizedPlan.classification,
-        normalizedPlan.title
+        normalizedPlan.title,
+        source
       );
       contentToWrite = contentWithFrontMatter;
       generatedSbId = sbId;
@@ -291,6 +428,15 @@ async function executeCodeCommitOperations(
       // Replace PLACEHOLDER in path with actual SB_ID
       pathToWrite = op.path.replace('PLACEHOLDER', sbId);
       primaryFilePath = pathToWrite;
+      
+      // Find and append related items by tags
+      const tags = extractTags(op.content, normalizedPlan.title);
+      if (tags.length > 0) {
+        const related = await findRelatedByTags(config, tags, pathToWrite);
+        if (related.length > 0) {
+          contentToWrite = appendRelatedSection(contentToWrite, related);
+        }
+      }
     }
 
     if (op.operation === 'append') {
@@ -748,7 +894,7 @@ export async function executeActionPlan(
         codecommit_status: 'IN_PROGRESS',
       });
 
-      const ccResult = await executeCodeCommitOperations(config.knowledgeStore, plan);
+      const ccResult = await executeCodeCommitOperations(config.knowledgeStore, plan, slackContext);
       commitResult = ccResult.commit;
       generatedSbId = ccResult.sbId;
       primaryFilePath = ccResult.filePath;
