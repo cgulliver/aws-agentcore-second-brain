@@ -82,6 +82,11 @@ Task: review the pull request before end of day
 
 **Destination:** OmniFocus via Mail Drop email (includes SB-ID in task notes for linking)
 
+**Audit Trail:** Tasks are also logged to `00-inbox/YYYY-MM-DD.md` with format:
+```
+- HH:MM: [task] Task title (Project: Project Name)
+```
+
 ### Status Update
 
 Change the status of an existing project.
@@ -359,10 +364,11 @@ I decided to use PostgreSQL and I decided to go with monthly billing
 ### What Gets Split
 
 The agent splits when it detects distinct items:
-- Different verbs: "upload X and write Y" → 2 items
-- Multiple decisions: "I decided X and I decided Y" → 2 decisions
+- Different verbs: "upload X, write Y, and deploy Z" → 3 items
+- Multiple decisions: "I decided X, Y, and Z" → 3 decisions
 - Mixed types: "I decided X and I need to Y" → 1 decision + 1 task
-- Numbered lists: "1. X 2. Y" → 2 items
+- Numbered lists: "1. X 2. Y 3. Z" → 3 items
+- Semicolon-separated: "email John; call Sarah; update docs" → 3 items
 
 ### What Stays Together
 
