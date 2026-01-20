@@ -299,8 +299,15 @@ def normalize_response(result: dict | list) -> dict | None:
     Validates: Requirements 2.1, 2.5
     """
     if isinstance(result, dict):
-        # Check if it's already a multi-item response
+        # Check if it's a multi-item response wrapper
         if 'items' in result and isinstance(result['items'], list):
+            items = result['items']
+            if len(items) == 0:
+                return None
+            if len(items) == 1:
+                # Single item wrapped in items array - unwrap it
+                return items[0] if isinstance(items[0], dict) else None
+            # Multiple items - return as-is
             return result
         # Single Action Plan
         return result
