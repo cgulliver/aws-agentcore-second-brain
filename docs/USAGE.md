@@ -21,13 +21,13 @@ Send a direct message to your Slack bot. The agent will:
 
 **Example:**
 ```
-I need to review estimates with Chase, our landscaping pro. His number is 404.695.5188
+I need to review estimates with John, our landscaping contractor. His number is 555-123-4567
 ```
 
 The agent will:
-- Create a task: "Review estimates with Chase"
+- Create a task: "Review estimates with John"
 - Link to landscaping project (detected via Memory context)
-- Preserve contact: "Chase (landscaping) - 404.695.5188"
+- Preserve contact: "John (landscaping) - 555-123-4567"
 - Log everything to inbox and send to OmniFocus
 
 ## Memory-Based Item Context

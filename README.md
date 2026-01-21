@@ -2,7 +2,7 @@
 
 > A personal knowledge capture system that turns Slack DMs into organized notes, decisions, and tasks.
 
-[![Tests](https://img.shields.io/badge/tests-436%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-417%20passing-brightgreen)]()
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue)]()
 [![AWS CDK](https://img.shields.io/badge/AWS%20CDK-2.x-orange)]()
 [![License](https://img.shields.io/badge/license-MIT-green)]()
