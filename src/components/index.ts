@@ -210,9 +210,14 @@ export {
   ensureTasksSection,
   appendTaskToSection,
   appendTaskLog,
+  formatReferenceEntry,
+  ensureReferencesSection,
+  appendReferenceToSection,
+  appendReferenceLog,
   type TaskLoggerConfig,
   type TaskLogEntry,
   type TaskLogResult,
+  type ReferenceEntry,
 } from './task-logger';
 
 // Status Intent Detector

@@ -168,3 +168,141 @@ export async function appendTaskLog(
     };
   }
 }
+
+
+// Reference entry structure (for ideas/decisions linked to projects)
+export interface ReferenceEntry {
+  sbId: string;      // e.g., "sb-abc1234"
+  title: string;     // e.g., "Repurpose ferns for landscaping"
+  type: 'idea' | 'decision';
+}
+
+/**
+ * Format a reference entry as a wikilink
+ * 
+ * Format: `- [[sb-xxxxxxx|Title]] (type)`
+ */
+export function formatReferenceEntry(entry: ReferenceEntry): string {
+  if (!entry.sbId || !entry.sbId.startsWith('sb-')) {
+    throw new Error(`Invalid sb_id format: ${entry.sbId}`);
+  }
+  
+  if (!entry.title || entry.title.trim().length === 0) {
+    throw new Error('Reference title cannot be empty');
+  }
+  
+  return `- [[${entry.sbId}|${entry.title.trim()}]] (${entry.type})`;
+}
+
+/**
+ * Find or create the ## References section in project content
+ */
+export function ensureReferencesSection(content: string): string {
+  // Check if ## References section already exists
+  if (/^## References\s*$/m.test(content)) {
+    return content;
+  }
+  
+  // Find the source line (--- at end of file)
+  const sourceLineMatch = content.match(/\n---\nSource:/);
+  
+  if (sourceLineMatch && sourceLineMatch.index !== undefined) {
+    // Insert ## References section before the source line
+    const beforeSource = content.slice(0, sourceLineMatch.index);
+    const sourceAndAfter = content.slice(sourceLineMatch.index);
+    return `${beforeSource}\n\n## References\n${sourceAndAfter}`;
+  }
+  
+  // No source line found, append to end
+  return `${content.trimEnd()}\n\n## References\n`;
+}
+
+/**
+ * Append a reference entry to the ## References section
+ */
+export function appendReferenceToSection(content: string, entry: ReferenceEntry): string {
+  // Ensure References section exists
+  const contentWithSection = ensureReferencesSection(content);
+  
+  // Format the entry
+  const formattedEntry = formatReferenceEntry(entry);
+  
+  // Check if this reference already exists (avoid duplicates)
+  if (contentWithSection.includes(`[[${entry.sbId}`)) {
+    return contentWithSection; // Already linked
+  }
+  
+  // Find the ## References section and append entry
+  const refsMatch = contentWithSection.match(/^## References\s*$/m);
+  if (!refsMatch || refsMatch.index === undefined) {
+    throw new Error('Failed to find References section after creation');
+  }
+  
+  const refsIndex = refsMatch.index + refsMatch[0].length;
+  
+  // Find the next section or end of content
+  const afterRefs = contentWithSection.slice(refsIndex);
+  const nextSectionMatch = afterRefs.match(/\n## |\n---\nSource:/);
+  
+  if (nextSectionMatch && nextSectionMatch.index !== undefined) {
+    // Insert before next section
+    const beforeNext = contentWithSection.slice(0, refsIndex + nextSectionMatch.index);
+    const nextAndAfter = contentWithSection.slice(refsIndex + nextSectionMatch.index);
+    return `${beforeNext}\n${formattedEntry}${nextAndAfter}`;
+  }
+  
+  // No next section, append to end
+  return `${contentWithSection.trimEnd()}\n${formattedEntry}\n`;
+}
+
+/**
+ * Append a reference (idea/decision) to a project file
+ */
+export async function appendReferenceLog(
+  config: TaskLoggerConfig,
+  projectPath: string,
+  entry: ReferenceEntry
+): Promise<TaskLogResult> {
+  try {
+    // Read current file content
+    const content = await readFile(config, projectPath);
+    if (!content) {
+      return {
+        success: false,
+        error: `Project file not found: ${projectPath}`,
+      };
+    }
+    
+    // Append reference to content
+    const updatedContent = appendReferenceToSection(content, entry);
+    
+    // If content unchanged (duplicate), return success without commit
+    if (updatedContent === content) {
+      return { success: true };
+    }
+    
+    // Get parent commit for write
+    const parentCommitId = await getLatestCommitId(config);
+    
+    // Generate commit message
+    const commitMessage = `Link ${entry.type}: ${entry.title}`;
+    
+    // Write updated file
+    const result = await writeFile(
+      config,
+      { path: projectPath, content: updatedContent, mode: 'update' },
+      commitMessage,
+      parentCommitId
+    );
+    
+    return {
+      success: true,
+      commitId: result.commitId,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+}

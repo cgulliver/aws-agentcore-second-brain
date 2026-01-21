@@ -91,6 +91,7 @@ import {
 } from '../components/action-plan';
 import {
   appendTaskLog,
+  appendReferenceLog,
 } from '../components/task-logger';
 import { log, redactPII } from './logging';
 import { createHash } from 'crypto';
@@ -949,8 +950,9 @@ async function executeAndFinalize(
 ): Promise<void> {
   await updateExecutionState(idempotencyConfig, eventId, { status: 'EXECUTING' });
 
-  // Task-project linking: First check linked_items from LLM/Memory context
-  if (actionPlan.classification === 'task' && !actionPlan.linked_project && actionPlan.linked_items?.length) {
+  // Project linking from Memory context: Check linked_items for tasks, ideas, and decisions
+  const linkableTypes = ['task', 'idea', 'decision'];
+  if (linkableTypes.includes(actionPlan.classification || '') && !actionPlan.linked_project && actionPlan.linked_items?.length) {
     // Find project in linked_items
     const linkedProject = actionPlan.linked_items.find(item => 
       item.sb_id && item.title && (item.confidence ?? 0) >= 0.5
@@ -961,7 +963,7 @@ async function executeAndFinalize(
         title: linkedProject.title,
         confidence: linkedProject.confidence ?? 0.8,
       };
-      log('info', 'Task linked to project from Memory context', {
+      log('info', `${actionPlan.classification} linked to project from Memory context`, {
         event_id: eventId,
         project_sb_id: linkedProject.sb_id,
         project_title: linkedProject.title,
@@ -1074,6 +1076,56 @@ async function executeAndFinalize(
     } catch (error) {
       // Log but don't fail - task logging is supplementary
       log('warn', 'Task logging failed', {
+        event_id: eventId,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  }
+
+  // Reference logging: If idea/decision was linked to a project, add to project's References
+  if (result.success && (actionPlan.classification === 'idea' || actionPlan.classification === 'decision') && actionPlan.linked_project) {
+    try {
+      // Get the sb_id from the created file path
+      const createdFile = result.filesModified?.[0];
+      const sbIdMatch = createdFile?.match(/sb-[a-f0-9]{7}/);
+      const sbId = sbIdMatch?.[0];
+      
+      if (sbId) {
+        const matchResult = await findMatchingProject(
+          projectMatcherConfig,
+          actionPlan.linked_project.title
+        );
+        
+        if (matchResult.bestMatch) {
+          const logResult = await appendReferenceLog(
+            knowledgeConfig,
+            matchResult.bestMatch.path,
+            { 
+              sbId, 
+              title: actionPlan.title || 'Untitled', 
+              type: actionPlan.classification as 'idea' | 'decision'
+            }
+          );
+          
+          if (logResult.success) {
+            log('info', 'Reference logged to project', {
+              event_id: eventId,
+              project_sb_id: actionPlan.linked_project.sb_id,
+              reference_sb_id: sbId,
+              reference_type: actionPlan.classification,
+              commit_id: logResult.commitId,
+            });
+          } else {
+            log('warn', 'Failed to log reference to project', {
+              event_id: eventId,
+              project_sb_id: actionPlan.linked_project.sb_id,
+              error: logResult.error,
+            });
+          }
+        }
+      }
+    } catch (error) {
+      log('warn', 'Reference logging failed', {
         event_id: eventId,
         error: error instanceof Error ? error.message : 'Unknown error',
       });
@@ -1231,8 +1283,9 @@ async function processSingleItem(
     project_reference: actionPlan.project_reference,
   });
 
-  // Task-project linking: First check linked_items from LLM/Memory context
-  if (actionPlan.classification === 'task' && !actionPlan.linked_project && actionPlan.linked_items?.length) {
+  // Project linking from Memory context: Check linked_items for tasks, ideas, and decisions
+  const linkableTypes = ['task', 'idea', 'decision'];
+  if (linkableTypes.includes(actionPlan.classification || '') && !actionPlan.linked_project && actionPlan.linked_items?.length) {
     const linkedProject = actionPlan.linked_items.find(item => 
       item.sb_id && item.title && (item.confidence ?? 0) >= 0.5
     );
@@ -1242,7 +1295,7 @@ async function processSingleItem(
         title: linkedProject.title,
         confidence: linkedProject.confidence ?? 0.8,
       };
-      log('info', 'Multi-item task linked to project from Memory context', {
+      log('info', `Multi-item ${actionPlan.classification} linked to project from Memory context`, {
         event_id: eventId,
         item_index: itemIndex,
         project_sb_id: linkedProject.sb_id,
@@ -1350,6 +1403,50 @@ async function processSingleItem(
       }
     } catch (error) {
       log('warn', 'Multi-item task logging failed', {
+        event_id: eventId,
+        item_index: itemIndex,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  }
+
+  // Reference logging: If idea/decision was linked to a project, add to project's References
+  if (result.success && (actionPlan.classification === 'idea' || actionPlan.classification === 'decision') && actionPlan.linked_project) {
+    try {
+      const createdFile = result.filesModified?.[0];
+      const sbIdMatch = createdFile?.match(/sb-[a-f0-9]{7}/);
+      const sbId = sbIdMatch?.[0];
+      
+      if (sbId) {
+        const matchResult = await findMatchingProject(
+          projectMatcherConfig,
+          actionPlan.linked_project.title
+        );
+        
+        if (matchResult.bestMatch) {
+          const logResult = await appendReferenceLog(
+            knowledgeConfig,
+            matchResult.bestMatch.path,
+            { 
+              sbId, 
+              title: actionPlan.title || 'Untitled', 
+              type: actionPlan.classification as 'idea' | 'decision'
+            }
+          );
+          
+          if (logResult.success) {
+            log('info', 'Multi-item reference logged to project', {
+              event_id: eventId,
+              item_index: itemIndex,
+              project_sb_id: actionPlan.linked_project.sb_id,
+              reference_sb_id: sbId,
+              commit_id: logResult.commitId,
+            });
+          }
+        }
+      }
+    } catch (error) {
+      log('warn', 'Multi-item reference logging failed', {
         event_id: eventId,
         item_index: itemIndex,
         error: error instanceof Error ? error.message : 'Unknown error',
