@@ -542,7 +542,8 @@ async function executeCodeCommitOperations(
     const parentCommitId = await getLatestCommitId(config);
     
     // Inject front matter for idea/decision/project classifications
-    let contentToWrite = op.content;
+    // Use op.content if available, otherwise fall back to top-level content
+    let contentToWrite = op.content || normalizedPlan.content || '';
     let pathToWrite = op.path;
     
     if (requiresFrontMatter(normalizedPlan.classification) && op.operation === 'create') {
@@ -553,7 +554,7 @@ async function executeCodeCommitOperations(
       } : undefined;
       
       const { content: contentWithFrontMatter, sbId } = injectFrontMatter(
-        op.content,
+        contentToWrite,
         normalizedPlan.classification,
         normalizedPlan.title,
         source,
@@ -1220,13 +1221,18 @@ export async function executeActionPlan(
 
     const receiptResult = await appendReceipt(config.knowledgeStore, receipt);
 
+    // Use actual file path (with real sb_id) instead of placeholder path from plan
+    const actualFilesModified = primaryFilePath 
+      ? [primaryFilePath] 
+      : (plan.file_operations || []).map((op) => op.path);
+
     return {
       success: true,
       commitId: commitResult?.commitId,
       receiptCommitId: receiptResult.commitId,
       slackReplyTs: slackReplyTs || undefined,
       emailMessageId: emailMessageId || undefined,
-      filesModified: (plan.file_operations || []).map((op) => op.path),
+      filesModified: actualFilesModified,
       completedSteps,
     };
   } catch (error) {

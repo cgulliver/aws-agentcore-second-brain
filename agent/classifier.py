@@ -128,9 +128,11 @@ def create_classifier_agent(system_prompt: str, session_manager=None) -> Agent:
         Configured Strands Agent
     """
     # Configure Bedrock model with parameterized model ID
+    # Set max_tokens to ensure complete JSON responses
     model = BedrockModel(
         model_id=MODEL_ID,
         region_name=AWS_REGION,
+        max_tokens=4096,  # Ensure enough tokens for complete Action Plan JSON
     )
     
     agent_kwargs = {
@@ -189,7 +191,12 @@ def validate_action_plan(plan: dict) -> list[str]:
         return errors
     
     # For capture intent, validate required fields
-    required_fields = ['classification', 'confidence', 'reasoning', 'title', 'content']
+    # Note: 'content' is not required for tasks (they route to OmniFocus, not files)
+    classification = plan.get('classification', '')
+    if classification == 'task':
+        required_fields = ['classification', 'confidence', 'reasoning', 'title']
+    else:
+        required_fields = ['classification', 'confidence', 'reasoning', 'title', 'content']
     for field in required_fields:
         if field not in plan:
             errors.append(f"Missing required field: {field}")
@@ -448,25 +455,45 @@ async def invoke(payload=None):
             - file_operations: array of file operations
             Return only valid JSON."""
         
-        # Sync CodeCommit items to Memory before classification
-        # This ensures the LLM has up-to-date item context via Memory retrieval
-        sync_result = None
-        if ITEM_SYNC_AVAILABLE and MEMORY_AVAILABLE and MEMORY_ID:
+        # Fetch item context directly from CodeCommit and inject into prompt
+        # This is more reliable than async Memory retrieval
+        item_context = ""
+        if ITEM_SYNC_AVAILABLE:
             try:
-                sync_module = ItemSyncModule(memory_id=MEMORY_ID, region=AWS_REGION)
-                sync_result = sync_module.sync_items(user_id)
-                if not sync_result.success:
-                    # Log but don't fail - sync is optional
-                    print(f"Warning: Item sync failed: {sync_result.error}")
+                sync_module = ItemSyncModule(memory_id=MEMORY_ID or '', region=AWS_REGION)
+                head_commit = sync_module.get_codecommit_head()
+                if head_commit:
+                    all_files = sync_module._get_all_item_files(head_commit)
+                    items = []
+                    for file_info in all_files:
+                        content = sync_module.get_file_content(file_info['path'], head_commit)
+                        if content:
+                            metadata = sync_module.extract_item_metadata(file_info['path'], content)
+                            if metadata:
+                                items.append(metadata)
+                    
+                    if items:
+                        # Build context section for system prompt
+                        context_lines = ["\n\n## Item Context from Knowledge Base\n"]
+                        context_lines.append("Use these items for linking when relevant:\n")
+                        for item in items:
+                            status_str = f" (status: {item.status})" if item.status else ""
+                            tags_str = f" [tags: {', '.join(item.tags)}]" if item.tags else ""
+                            context_lines.append(f"- {item.item_type}: \"{item.title}\" (sb_id: {item.sb_id}){status_str}{tags_str}")
+                        item_context = "\n".join(context_lines)
+                        print(f"Info: Injected {len(items)} items into context")
             except Exception as e:
-                # Log but don't fail - sync is optional
-                print(f"Warning: Item sync error: {e}")
+                # Log but don't fail - context injection is optional
+                print(f"Warning: Item context injection failed: {e}")
         
-        # Task 25.1: Create session manager for Memory integration
+        # Append item context to system prompt
+        enhanced_prompt = system_prompt + item_context
+        
+        # Task 25.1: Create session manager for Memory integration (for behavioral learning)
         session_manager = create_session_manager(user_id, session_id)
         
-        # Create agent with system prompt and optional Memory
-        agent = create_classifier_agent(system_prompt, session_manager)
+        # Create agent with enhanced system prompt and optional Memory
+        agent = create_classifier_agent(enhanced_prompt, session_manager)
         
         # Invoke agent
         response = agent(user_message)

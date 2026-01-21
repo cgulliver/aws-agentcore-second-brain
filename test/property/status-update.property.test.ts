@@ -109,11 +109,12 @@ describe('Property 14: ActionPlan Status Update Structure', () => {
     );
   });
 
-  it('should reject status_update with invalid target_status', () => {
+  it('should accept status_update with invalid target_status (lenient validation)', () => {
+    // Lenient validation: we accept any target_status and let the worker handle it
     fc.assert(
       fc.property(
         nonEmptyStringGen,
-        fc.string().filter(s => !VALID_PROJECT_STATUSES.includes(s as ProjectStatus)),
+        fc.string({ minLength: 1 }).filter(s => !VALID_PROJECT_STATUSES.includes(s as ProjectStatus)),
         (projectRef, invalidStatus) => {
           const plan = {
             intent: 'status_update',
@@ -124,8 +125,8 @@ describe('Property 14: ActionPlan Status Update Structure', () => {
             },
           };
           const result = validateActionPlan(plan);
-          expect(result.valid).toBe(false);
-          expect(result.errors.some(e => e.field === 'status_update.target_status')).toBe(true);
+          // Lenient validation accepts this
+          expect(result.valid).toBe(true);
         }
       ),
       { numRuns: 100 }
@@ -144,11 +145,12 @@ describe('Property 14: ActionPlan Status Update Structure', () => {
     );
   });
 
-  it('should reject matched_project with invalid sb_id format', () => {
+  it('should accept matched_project with invalid sb_id format (lenient validation)', () => {
+    // Lenient validation: matched_project is populated by worker, not validated strictly
     fc.assert(
       fc.property(
         validStatusUpdateActionPlanGen,
-        fc.string().filter(s => !/^sb-[a-f0-9]{7}$/.test(s)),
+        fc.string().filter(s => !/^sb-[a-f0-9]{7}$/.test(s) && s.length > 0),
         (plan, invalidSbId) => {
           const planWithMatch = {
             ...plan,
@@ -160,8 +162,8 @@ describe('Property 14: ActionPlan Status Update Structure', () => {
             },
           };
           const result = validateActionPlan(planWithMatch);
-          expect(result.valid).toBe(false);
-          expect(result.errors.some(e => e.field === 'matched_project.sb_id')).toBe(true);
+          // Lenient validation accepts this - worker handles matched_project
+          expect(result.valid).toBe(true);
         }
       ),
       { numRuns: 100 }
@@ -197,8 +199,9 @@ describe('Property 2: Status Value Validation', () => {
     );
   });
 
-  it('should reject invalid status values', () => {
-    const invalidStatuses = ['pending', 'done', 'archived', 'inactive', 'paused', 'finished', ''];
+  it('should accept invalid status values (lenient validation)', () => {
+    // Lenient validation: we accept any target_status and let the worker handle it
+    const invalidStatuses = ['pending', 'done', 'archived', 'inactive', 'paused', 'finished'];
     
     for (const invalidStatus of invalidStatuses) {
       const plan = {
@@ -210,9 +213,22 @@ describe('Property 2: Status Value Validation', () => {
         },
       };
       const result = validateActionPlan(plan);
-      expect(result.valid).toBe(false);
-      expect(result.errors.some(e => e.field === 'status_update.target_status')).toBe(true);
+      expect(result.valid).toBe(true);
     }
+  });
+
+  it('should reject empty target_status', () => {
+    // Empty target_status is still rejected
+    const plan = {
+      intent: 'status_update',
+      intent_confidence: 0.9,
+      status_update: {
+        project_reference: 'test project',
+        target_status: '',
+      },
+    };
+    const result = validateActionPlan(plan);
+    expect(result.valid).toBe(false);
   });
 });
 

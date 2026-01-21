@@ -315,7 +315,9 @@ describe('Intent Classification', () => {
       expect(result.valid).toBe(true);
     });
 
-    it('should reject query intent with file_operations', () => {
+    it('should accept query intent with file_operations (lenient validation)', () => {
+      // Lenient validation: we don't reject query intent with file_operations
+      // The worker will handle it appropriately
       const plan = {
         intent: 'query',
         intent_confidence: 0.92,
@@ -329,7 +331,7 @@ describe('Intent Classification', () => {
         cited_files: ['test.md'],
       };
       const result = validateActionPlan(plan);
-      expect(result.valid).toBe(false);
+      expect(result.valid).toBe(true);
     });
   });
 });

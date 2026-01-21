@@ -299,12 +299,7 @@ export function appendReferenceToSection(content: string, entry: ReferenceEntry)
   // Format the entry (without type suffix since section indicates type)
   const formattedEntry = `- [[${entry.sbId}|${entry.title.trim()}]]`;
   
-  // Check if this reference already exists (avoid duplicates)
-  if (contentWithSection.includes(`[[${entry.sbId}`)) {
-    return contentWithSection; // Already linked
-  }
-  
-  // Find the section and append entry
+  // Find the section
   const sectionRegex = new RegExp(`^## ${sectionName}\\s*$`, 'm');
   const sectionMatch = contentWithSection.match(sectionRegex);
   if (!sectionMatch || sectionMatch.index === undefined) {
@@ -316,6 +311,15 @@ export function appendReferenceToSection(content: string, entry: ReferenceEntry)
   // Find the next section or end of content
   const afterSection = contentWithSection.slice(sectionIndex);
   const nextSectionMatch = afterSection.match(/\n## |\n---\nSource:/);
+  
+  // Extract just the section content to check for duplicates (not the whole file)
+  const sectionEndIndex = nextSectionMatch?.index ?? afterSection.length;
+  const sectionContent = afterSection.slice(0, sectionEndIndex);
+  
+  // Check if this reference already exists in this section (avoid duplicates)
+  if (sectionContent.includes(`[[${entry.sbId}`)) {
+    return contentWithSection; // Already linked in this section
+  }
   
   if (nextSectionMatch && nextSectionMatch.index !== undefined) {
     // Insert before next section

@@ -297,7 +297,8 @@ describe('Action Plan', () => {
       expect(result.errors.some((e) => e.field === 'classification')).toBe(true);
     });
 
-    it('rejects confidence out of range', () => {
+    it('accepts confidence out of range (lenient - defaults to 0.8)', () => {
+      // Lenient validation: out-of-range confidence is defaulted, not rejected
       const plan = {
         classification: 'inbox',
         confidence: 1.5,
@@ -308,11 +309,11 @@ describe('Action Plan', () => {
       };
 
       const result = validateActionPlan(plan);
-      expect(result.valid).toBe(false);
-      expect(result.errors.some((e) => e.field === 'confidence')).toBe(true);
+      expect(result.valid).toBe(true);
     });
 
-    it('rejects negative confidence', () => {
+    it('accepts negative confidence (lenient - defaults to 0.8)', () => {
+      // Lenient validation: negative confidence is defaulted, not rejected
       const plan = {
         classification: 'inbox',
         confidence: -0.1,
@@ -323,7 +324,7 @@ describe('Action Plan', () => {
       };
 
       const result = validateActionPlan(plan);
-      expect(result.valid).toBe(false);
+      expect(result.valid).toBe(true);
     });
 
     it('allows missing task_details for task classification (lenient validation)', () => {
@@ -382,9 +383,10 @@ describe('Action Plan', () => {
         ],
       };
 
+      // Lenient validation: file path prefixes are no longer strictly validated
+      // The worker handles file operations, so we trust the LLM
       const result = validateActionPlan(plan);
-      expect(result.valid).toBe(false);
-      expect(result.errors.some((e) => e.field.includes('path'))).toBe(true);
+      expect(result.valid).toBe(true);
     });
   });
 

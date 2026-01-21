@@ -818,11 +818,62 @@ async function handleStatusUpdate(
   const statusUpdate = actionPlan.status_update!;
 
   try {
-    // Find matching project
-    const matchResult = await findMatchingProject(
-      projectMatcherConfig,
-      statusUpdate.project_reference
+    // First check if LLM already matched a project via Memory context (linked_items)
+    // This lets the LLM do what it does best - inferring links from context
+    let matchResult: Awaited<ReturnType<typeof findMatchingProject>>;
+    
+    const linkedProject = actionPlan.linked_items?.find(item => 
+      item.sb_id && item.title && (item.confidence ?? 0) >= 0.5
     );
+    
+    if (linkedProject) {
+      // LLM already found the project - trust it
+      log('info', 'Using linked_items for status update (LLM matched from Memory)', {
+        event_id: eventId,
+        sb_id: linkedProject.sb_id,
+        title: linkedProject.title,
+        confidence: linkedProject.confidence,
+      });
+      
+      // Find the project path by sb_id
+      const { CodeCommitClient, GetFolderCommand, GetFileCommand } = await import('@aws-sdk/client-codecommit');
+      const codecommit = new CodeCommitClient({ region: AWS_REGION });
+      
+      const folderResponse = await codecommit.send(new GetFolderCommand({
+        repositoryName: REPOSITORY_NAME,
+        commitSpecifier: 'main',
+        folderPath: '30-projects',
+      }));
+      
+      const projectFile = folderResponse.files?.find(f => 
+        f.absolutePath?.includes(linkedProject.sb_id)
+      );
+      
+      if (projectFile?.absolutePath) {
+        matchResult = {
+          bestMatch: {
+            sbId: linkedProject.sb_id,
+            title: linkedProject.title,
+            path: projectFile.absolutePath,
+            confidence: linkedProject.confidence ?? 0.9,
+          },
+          candidates: [],
+          searchedCount: 1,
+        };
+      } else {
+        // Fallback to fuzzy search if file not found
+        matchResult = await findMatchingProject(
+          projectMatcherConfig,
+          statusUpdate.project_reference
+        );
+      }
+    } else {
+      // No linked_items - fall back to fuzzy search
+      matchResult = await findMatchingProject(
+        projectMatcherConfig,
+        statusUpdate.project_reference
+      );
+    }
 
     log('info', 'Project match result for status update', {
       event_id: eventId,
@@ -1091,15 +1142,24 @@ async function executeAndFinalize(
       const sbId = sbIdMatch?.[0];
       
       if (sbId) {
-        const matchResult = await findMatchingProject(
-          projectMatcherConfig,
-          actionPlan.linked_project.title
+        // Find project by sb_id from linked_project (trust the LLM's match from Memory)
+        const { CodeCommitClient, GetFolderCommand } = await import('@aws-sdk/client-codecommit');
+        const codecommit = new CodeCommitClient({ region: AWS_REGION });
+        
+        const folderResponse = await codecommit.send(new GetFolderCommand({
+          repositoryName: REPOSITORY_NAME,
+          commitSpecifier: 'main',
+          folderPath: '30-projects',
+        }));
+        
+        const projectFile = folderResponse.files?.find(f => 
+          f.absolutePath?.includes(actionPlan.linked_project!.sb_id)
         );
         
-        if (matchResult.bestMatch) {
+        if (projectFile?.absolutePath) {
           const logResult = await appendReferenceLog(
             knowledgeConfig,
-            matchResult.bestMatch.path,
+            projectFile.absolutePath,
             { 
               sbId, 
               title: actionPlan.title || 'Untitled', 
@@ -1122,6 +1182,11 @@ async function executeAndFinalize(
               error: logResult.error,
             });
           }
+        } else {
+          log('warn', 'Project file not found for reference logging', {
+            event_id: eventId,
+            project_sb_id: actionPlan.linked_project.sb_id,
+          });
         }
       }
     } catch (error) {
@@ -1418,15 +1483,24 @@ async function processSingleItem(
       const sbId = sbIdMatch?.[0];
       
       if (sbId) {
-        const matchResult = await findMatchingProject(
-          projectMatcherConfig,
-          actionPlan.linked_project.title
+        // Find project by sb_id from linked_project (trust the LLM's match from Memory)
+        const { CodeCommitClient, GetFolderCommand } = await import('@aws-sdk/client-codecommit');
+        const codecommit = new CodeCommitClient({ region: AWS_REGION });
+        
+        const folderResponse = await codecommit.send(new GetFolderCommand({
+          repositoryName: REPOSITORY_NAME,
+          commitSpecifier: 'main',
+          folderPath: '30-projects',
+        }));
+        
+        const projectFile = folderResponse.files?.find(f => 
+          f.absolutePath?.includes(actionPlan.linked_project!.sb_id)
         );
         
-        if (matchResult.bestMatch) {
+        if (projectFile?.absolutePath) {
           const logResult = await appendReferenceLog(
             knowledgeConfig,
-            matchResult.bestMatch.path,
+            projectFile.absolutePath,
             { 
               sbId, 
               title: actionPlan.title || 'Untitled', 

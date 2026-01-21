@@ -121,18 +121,12 @@ const VALID_CLASSIFICATIONS: string[] = [
   'fix',
 ];
 
-// Valid file path prefixes by classification
-const VALID_PATH_PREFIXES: Record<string, string[]> = {
-  inbox: ['00-inbox/'],
-  idea: ['10-ideas/'],
-  decision: ['20-decisions/'],
-  project: ['30-projects/'],
-  task: ['00-inbox/'], // Tasks may also log to inbox
-  fix: ['00-inbox/', '10-ideas/', '20-decisions/', '30-projects/'], // Fix can update any file
-};
-
 /**
  * Validate Action Plan against schema
+ * 
+ * PHILOSOPHY: Trust the LLM. Only validate absolute essentials.
+ * The LLM is smart - let it do the heavy lifting. We only check
+ * that we have enough to proceed, not that everything is perfect.
  * 
  * Validates: Requirements 43.1, 43.2, 53 (Phase 2 Intent)
  */
@@ -149,106 +143,46 @@ export function validateActionPlan(plan: unknown): ValidationResult {
 
   const p = plan as Record<string, unknown>;
 
-  // Phase 2: Intent validation
+  // Phase 2: Intent - default to capture if missing
   const validIntents: Intent[] = ['capture', 'query', 'status_update'];
   if (!p.intent) {
-    // Default to capture for backward compatibility
     p.intent = 'capture';
   } else if (!validIntents.includes(p.intent as Intent)) {
-    errors.push({
-      field: 'intent',
-      message: `Invalid intent: ${p.intent}. Must be one of: ${validIntents.join(', ')}`,
-    });
+    // Be lenient - default to capture instead of failing
+    p.intent = 'capture';
   }
 
+  // Default intent_confidence if missing
   if (p.intent_confidence === undefined || p.intent_confidence === null) {
-    // Default to 1.0 for backward compatibility
     p.intent_confidence = 1.0;
-  } else {
-    const intentConfidence = Number(p.intent_confidence);
-    if (isNaN(intentConfidence) || intentConfidence < 0 || intentConfidence > 1) {
-      errors.push({
-        field: 'intent_confidence',
-        message: 'Intent confidence must be a number between 0 and 1',
-      });
-    }
   }
 
   const isQueryIntent = p.intent === 'query';
   const isStatusUpdateIntent = p.intent === 'status_update';
 
-  // For query intent, validate query-specific fields
-  // Note: query_response and cited_files are populated by the worker after searching,
-  // so they may not be present in the initial Action Plan from the LLM
+  // For query intent - minimal validation
   if (isQueryIntent) {
-    // query_response and cited_files are optional at validation time
-    // They will be populated by the worker after knowledge base search
-    if (Array.isArray(p.file_operations) && p.file_operations.length > 0) {
-      errors.push({ field: 'file_operations', message: 'File operations must be empty for query intent' });
-    }
-    // Skip classification validation for query intent
-    return { valid: errors.length === 0, errors };
+    return { valid: true, errors: [] };
   }
 
-  // For status_update intent, validate status update fields
+  // For status_update intent - just need project reference and target status
   if (isStatusUpdateIntent) {
-    // status_update object is required
     if (!p.status_update || typeof p.status_update !== 'object') {
       errors.push({ field: 'status_update', message: 'status_update object is required for status_update intent' });
     } else {
       const su = p.status_update as Record<string, unknown>;
-      // Validate project_reference
-      if (!su.project_reference || typeof su.project_reference !== 'string' || su.project_reference.length === 0) {
-        errors.push({ field: 'status_update.project_reference', message: 'project_reference is required and must be a non-empty string' });
+      if (!su.project_reference) {
+        errors.push({ field: 'status_update.project_reference', message: 'project_reference is required' });
       }
-      // Validate target_status
-      if (!su.target_status || typeof su.target_status !== 'string') {
+      if (!su.target_status) {
         errors.push({ field: 'status_update.target_status', message: 'target_status is required' });
-      } else if (!VALID_PROJECT_STATUSES.includes(su.target_status as ProjectStatus)) {
-        errors.push({ 
-          field: 'status_update.target_status', 
-          message: `target_status must be one of: ${VALID_PROJECT_STATUSES.join(', ')}` 
-        });
       }
     }
-    
-    // Validate matched_project if present (populated by worker after matching)
-    if (p.matched_project !== undefined && p.matched_project !== null) {
-      const mp = p.matched_project as Record<string, unknown>;
-      if (typeof mp !== 'object') {
-        errors.push({ field: 'matched_project', message: 'matched_project must be an object' });
-      } else {
-        // Validate sb_id format
-        if (!mp.sb_id || typeof mp.sb_id !== 'string') {
-          errors.push({ field: 'matched_project.sb_id', message: 'sb_id is required and must be a string' });
-        } else if (!/^sb-[a-f0-9]{7}$/.test(mp.sb_id as string)) {
-          errors.push({ field: 'matched_project.sb_id', message: 'sb_id must match format sb-[a-f0-9]{7}' });
-        }
-        // Validate title
-        if (!mp.title || typeof mp.title !== 'string') {
-          errors.push({ field: 'matched_project.title', message: 'title is required and must be a string' });
-        }
-        // Validate current_status
-        if (mp.current_status !== undefined && mp.current_status !== null) {
-          if (!VALID_PROJECT_STATUSES.includes(mp.current_status as ProjectStatus)) {
-            errors.push({ 
-              field: 'matched_project.current_status', 
-              message: `current_status must be one of: ${VALID_PROJECT_STATUSES.join(', ')}` 
-            });
-          }
-        }
-        // Validate path
-        if (!mp.path || typeof mp.path !== 'string') {
-          errors.push({ field: 'matched_project.path', message: 'path is required and must be a string' });
-        }
-      }
-    }
-    
-    // Skip classification validation for status_update intent
     return { valid: errors.length === 0, errors };
   }
 
-  // Required fields for capture intent
+  // For capture intent - just need classification and title
+  // Everything else can be derived or defaulted
   if (!p.classification) {
     errors.push({ field: 'classification', message: 'Classification is required' });
   } else if (!VALID_CLASSIFICATIONS.includes(p.classification as Classification)) {
@@ -258,216 +192,37 @@ export function validateActionPlan(plan: unknown): ValidationResult {
     });
   }
 
-  if (p.confidence === undefined || p.confidence === null) {
-    errors.push({ field: 'confidence', message: 'Confidence is required' });
-  } else {
-    const confidence = Number(p.confidence);
-    if (isNaN(confidence)) {
-      errors.push({ field: 'confidence', message: 'Confidence must be a number' });
-    } else if (confidence < 0 || confidence > 1) {
-      errors.push({
-        field: 'confidence',
-        message: `Confidence must be between 0 and 1, got: ${confidence}`,
-      });
-    }
-  }
-
-  if (!p.reasoning || typeof p.reasoning !== 'string') {
-    errors.push({ field: 'reasoning', message: 'Reasoning is required and must be a string' });
-  }
-
   if (!p.title || typeof p.title !== 'string') {
-    errors.push({ field: 'title', message: 'Title is required and must be a string' });
+    errors.push({ field: 'title', message: 'Title is required' });
   }
 
-  if (!p.content || typeof p.content !== 'string') {
-    // For tasks, content can be derived from title if missing
-    if (p.classification === 'task' && p.title && typeof p.title === 'string') {
-      // Allow missing content for tasks - we'll use title
-    } else {
-      errors.push({ field: 'content', message: 'Content is required and must be a string' });
+  // Default confidence if missing
+  if (p.confidence === undefined || p.confidence === null) {
+    p.confidence = 0.8;
+  }
+
+  // Default reasoning if missing
+  if (!p.reasoning) {
+    p.reasoning = 'Classified based on message content';
+  }
+
+  // Content can be derived from title if missing
+  if (!p.content && p.title) {
+    p.content = `# ${p.title}`;
+  }
+
+  // File operations are optional - worker can generate them
+  // No validation needed - trust the LLM or let worker handle it
+
+  // linked_items validation is minimal - just check it's an array if present
+  if (p.linked_items !== undefined && p.linked_items !== null && !Array.isArray(p.linked_items)) {
+    // Convert to array if it's a single object
+    if (typeof p.linked_items === 'object') {
+      p.linked_items = [p.linked_items];
     }
   }
 
-  // File operations validation
-  // For tasks, file_operations can be empty or missing (tasks route to email, not files)
-  const classification = p.classification as Classification;
-  const fileOps = p.file_operations;
-  
-  if (classification === 'task') {
-    // Tasks don't require file operations - they route to OmniFocus via email
-    // Allow null, undefined, or empty array
-    if (fileOps !== null && fileOps !== undefined && !Array.isArray(fileOps)) {
-      errors.push({ field: 'file_operations', message: 'File operations must be an array or null for tasks' });
-    }
-  } else if (fileOps === null || fileOps === undefined) {
-    // Allow missing file_operations - worker will generate them
-    // This handles cases where LLM doesn't include file_operations
-  } else if (!Array.isArray(fileOps)) {
-    errors.push({ field: 'file_operations', message: 'File operations must be an array' });
-  } else {
-    const validPrefixes = VALID_PATH_PREFIXES[classification] || [];
-
-    for (let i = 0; i < fileOps.length; i++) {
-      const op = fileOps[i] as Record<string, unknown>;
-
-      if (!op.operation || !['create', 'append', 'update'].includes(op.operation as string)) {
-        errors.push({
-          field: `file_operations[${i}].operation`,
-          message: 'Operation must be create, append, or update',
-        });
-      }
-
-      if (!op.path || typeof op.path !== 'string') {
-        errors.push({
-          field: `file_operations[${i}].path`,
-          message: 'Path is required and must be a string',
-        });
-      } else if (validPrefixes.length > 0) {
-        const pathValid = validPrefixes.some((prefix) =>
-          (op.path as string).startsWith(prefix)
-        );
-        if (!pathValid) {
-          errors.push({
-            field: `file_operations[${i}].path`,
-            message: `Path must start with one of: ${validPrefixes.join(', ')} for ${classification} classification`,
-          });
-        }
-      }
-
-      if (!op.content || typeof op.content !== 'string') {
-        errors.push({
-          field: `file_operations[${i}].content`,
-          message: 'Content is required and must be a string',
-        });
-      }
-    }
-  }
-
-  // Task details validation (required for task classification)
-  // If task_details is missing but we have a title, we can construct it
-  if (p.classification === 'task') {
-    if (!p.task_details || typeof p.task_details !== 'object') {
-      // Allow missing task_details - we'll construct from title
-      // This is a soft validation to handle LLM inconsistency
-    } else {
-      const td = p.task_details as Record<string, unknown>;
-      if (!td.title || typeof td.title !== 'string') {
-        // If task_details exists but has no title, that's an error
-        errors.push({
-          field: 'task_details.title',
-          message: 'Task title is required when task_details is provided',
-        });
-      }
-    }
-  }
-
-  // Task-project linking validation (optional fields)
-  // Validate linked_project structure when present
-  if (p.linked_project !== undefined && p.linked_project !== null) {
-    const lp = p.linked_project as Record<string, unknown>;
-    if (typeof lp !== 'object') {
-      errors.push({ field: 'linked_project', message: 'linked_project must be an object' });
-    } else {
-      // Validate sb_id format
-      if (!lp.sb_id || typeof lp.sb_id !== 'string') {
-        errors.push({ field: 'linked_project.sb_id', message: 'sb_id is required and must be a string' });
-      } else if (!/^sb-[a-f0-9]{7}$/.test(lp.sb_id as string)) {
-        errors.push({ field: 'linked_project.sb_id', message: 'sb_id must match format sb-[a-f0-9]{7}' });
-      }
-      // Validate title
-      if (!lp.title || typeof lp.title !== 'string') {
-        errors.push({ field: 'linked_project.title', message: 'title is required and must be a string' });
-      }
-      // Validate confidence
-      if (lp.confidence === undefined || lp.confidence === null) {
-        errors.push({ field: 'linked_project.confidence', message: 'confidence is required' });
-      } else {
-        const conf = Number(lp.confidence);
-        if (isNaN(conf) || conf < 0 || conf > 1) {
-          errors.push({ field: 'linked_project.confidence', message: 'confidence must be between 0 and 1' });
-        }
-      }
-    }
-  }
-
-  // Validate project_candidates array structure when present
-  if (p.project_candidates !== undefined && p.project_candidates !== null) {
-    if (!Array.isArray(p.project_candidates)) {
-      errors.push({ field: 'project_candidates', message: 'project_candidates must be an array' });
-    } else if (p.project_candidates.length > 3) {
-      errors.push({ field: 'project_candidates', message: 'project_candidates must have at most 3 items' });
-    } else {
-      for (let i = 0; i < p.project_candidates.length; i++) {
-        const cand = p.project_candidates[i] as Record<string, unknown>;
-        if (!cand.sb_id || typeof cand.sb_id !== 'string') {
-          errors.push({ field: `project_candidates[${i}].sb_id`, message: 'sb_id is required' });
-        }
-        if (!cand.title || typeof cand.title !== 'string') {
-          errors.push({ field: `project_candidates[${i}].title`, message: 'title is required' });
-        }
-      }
-    }
-  }
-
-  // Validate project_reference when present
-  if (p.project_reference !== undefined && p.project_reference !== null) {
-    if (typeof p.project_reference !== 'string' || p.project_reference.length === 0) {
-      errors.push({ field: 'project_reference', message: 'project_reference must be a non-empty string when present' });
-    }
-  }
-
-  // Validate linked_items array structure when present (cross-item linking)
-  // Note: Invalid items are filtered out rather than failing validation
-  // This allows the request to succeed even if the LLM puts placeholder sb_ids
-  if (p.linked_items !== undefined && p.linked_items !== null) {
-    if (!Array.isArray(p.linked_items)) {
-      errors.push({ field: 'linked_items', message: 'linked_items must be an array' });
-    } else {
-      const SB_ID_PATTERN = /^sb-[a-f0-9]{7}$/;
-      const validItems: Array<{ sb_id: string; title: string; confidence: number }> = [];
-      
-      for (let i = 0; i < p.linked_items.length; i++) {
-        const item = p.linked_items[i] as Record<string, unknown>;
-        if (typeof item !== 'object' || item === null) {
-          // Skip invalid items silently
-          continue;
-        }
-        
-        // Check if sb_id is valid
-        const sbIdValid = item.sb_id && 
-          typeof item.sb_id === 'string' && 
-          SB_ID_PATTERN.test(item.sb_id as string);
-        
-        // Check if title is valid
-        const titleValid = item.title && 
-          typeof item.title === 'string' && 
-          (item.title as string).length > 0;
-        
-        // Check if confidence is valid
-        const conf = Number(item.confidence);
-        const confValid = !isNaN(conf) && conf >= 0 && conf <= 1;
-        
-        // Only include items with valid sb_id, title, and confidence
-        if (sbIdValid && titleValid && confValid) {
-          validItems.push({
-            sb_id: item.sb_id as string,
-            title: item.title as string,
-            confidence: conf,
-          });
-        }
-        // Invalid items are silently filtered out - no error
-      }
-      
-      // Replace linked_items with only valid items
-      (p as Record<string, unknown>).linked_items = validItems;
-    }
-  }
-
-  return {
-    valid: errors.length === 0,
-    errors,
-  };
+  return { valid: errors.length === 0, errors };
 }
 
 /**
