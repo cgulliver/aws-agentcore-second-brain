@@ -223,7 +223,7 @@ describe('AgentCore Memory Configuration', () => {
 
   it('should create AgentCore Memory resource', () => {
     template.hasResourceProperties('AWS::BedrockAgentCore::Memory', {
-      Name: 'second_brain_memory',
+      Name: 'second_brain_memory_v2',
     });
   });
 

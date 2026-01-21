@@ -949,8 +949,28 @@ async function executeAndFinalize(
 ): Promise<void> {
   await updateExecutionState(idempotencyConfig, eventId, { status: 'EXECUTING' });
 
-  // Task-project linking: Check for project reference in task classification
-  if (actionPlan.classification === 'task' && actionPlan.project_reference) {
+  // Task-project linking: First check linked_items from LLM/Memory context
+  if (actionPlan.classification === 'task' && !actionPlan.linked_project && actionPlan.linked_items?.length) {
+    // Find project in linked_items
+    const linkedProject = actionPlan.linked_items.find(item => 
+      item.sb_id && item.title && (item.confidence ?? 0) >= 0.5
+    );
+    if (linkedProject) {
+      actionPlan.linked_project = {
+        sb_id: linkedProject.sb_id,
+        title: linkedProject.title,
+        confidence: linkedProject.confidence ?? 0.8,
+      };
+      log('info', 'Task linked to project from Memory context', {
+        event_id: eventId,
+        project_sb_id: linkedProject.sb_id,
+        project_title: linkedProject.title,
+      });
+    }
+  }
+
+  // Task-project linking: Fallback to project_reference search if no linked_project yet
+  if (actionPlan.classification === 'task' && !actionPlan.linked_project && actionPlan.project_reference) {
     log('info', 'Task has project reference, searching for match', {
       event_id: eventId,
       project_reference: actionPlan.project_reference,
@@ -1211,8 +1231,28 @@ async function processSingleItem(
     project_reference: actionPlan.project_reference,
   });
 
-  // Task-project linking: Check for project reference in task classification
-  if (actionPlan.classification === 'task' && actionPlan.project_reference) {
+  // Task-project linking: First check linked_items from LLM/Memory context
+  if (actionPlan.classification === 'task' && !actionPlan.linked_project && actionPlan.linked_items?.length) {
+    const linkedProject = actionPlan.linked_items.find(item => 
+      item.sb_id && item.title && (item.confidence ?? 0) >= 0.5
+    );
+    if (linkedProject) {
+      actionPlan.linked_project = {
+        sb_id: linkedProject.sb_id,
+        title: linkedProject.title,
+        confidence: linkedProject.confidence ?? 0.8,
+      };
+      log('info', 'Multi-item task linked to project from Memory context', {
+        event_id: eventId,
+        item_index: itemIndex,
+        project_sb_id: linkedProject.sb_id,
+        project_title: linkedProject.title,
+      });
+    }
+  }
+
+  // Task-project linking: Fallback to project_reference search if no linked_project yet
+  if (actionPlan.classification === 'task' && !actionPlan.linked_project && actionPlan.project_reference) {
     log('info', 'Multi-item task has project reference, searching for match', {
       event_id: eventId,
       item_index: itemIndex,
