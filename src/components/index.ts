@@ -212,6 +212,8 @@ export {
   appendTaskLog,
   formatReferenceEntry,
   ensureReferencesSection,
+  ensureIdeasSection,
+  ensureDecisionsSection,
   appendReferenceToSection,
   appendReferenceLog,
   type TaskLoggerConfig,

@@ -218,36 +218,109 @@ export function ensureReferencesSection(content: string): string {
 }
 
 /**
- * Append a reference entry to the ## References section
+ * Find or create the ## Ideas section in project content
+ */
+export function ensureIdeasSection(content: string): string {
+  if (/^## Ideas\s*$/m.test(content)) {
+    return content;
+  }
+  
+  // Insert after ## Tasks section if it exists
+  const tasksMatch = content.match(/^## Tasks\s*$/m);
+  if (tasksMatch && tasksMatch.index !== undefined) {
+    // Find the next section after Tasks
+    const afterTasks = content.slice(tasksMatch.index);
+    const nextSectionMatch = afterTasks.match(/\n## (?!Tasks)/);
+    
+    if (nextSectionMatch && nextSectionMatch.index !== undefined) {
+      const insertPoint = tasksMatch.index + nextSectionMatch.index;
+      return `${content.slice(0, insertPoint)}\n\n## Ideas\n${content.slice(insertPoint)}`;
+    }
+  }
+  
+  // Find the source line
+  const sourceLineMatch = content.match(/\n---\nSource:/);
+  if (sourceLineMatch && sourceLineMatch.index !== undefined) {
+    const beforeSource = content.slice(0, sourceLineMatch.index);
+    const sourceAndAfter = content.slice(sourceLineMatch.index);
+    return `${beforeSource}\n\n## Ideas\n${sourceAndAfter}`;
+  }
+  
+  return `${content.trimEnd()}\n\n## Ideas\n`;
+}
+
+/**
+ * Find or create the ## Decisions section in project content
+ */
+export function ensureDecisionsSection(content: string): string {
+  if (/^## Decisions\s*$/m.test(content)) {
+    return content;
+  }
+  
+  // Insert after ## Ideas section if it exists
+  const ideasMatch = content.match(/^## Ideas\s*$/m);
+  if (ideasMatch && ideasMatch.index !== undefined) {
+    const afterIdeas = content.slice(ideasMatch.index);
+    const nextSectionMatch = afterIdeas.match(/\n## (?!Ideas)/);
+    
+    if (nextSectionMatch && nextSectionMatch.index !== undefined) {
+      const insertPoint = ideasMatch.index + nextSectionMatch.index;
+      return `${content.slice(0, insertPoint)}\n\n## Decisions\n${content.slice(insertPoint)}`;
+    }
+  }
+  
+  // Find the source line
+  const sourceLineMatch = content.match(/\n---\nSource:/);
+  if (sourceLineMatch && sourceLineMatch.index !== undefined) {
+    const beforeSource = content.slice(0, sourceLineMatch.index);
+    const sourceAndAfter = content.slice(sourceLineMatch.index);
+    return `${beforeSource}\n\n## Decisions\n${sourceAndAfter}`;
+  }
+  
+  return `${content.trimEnd()}\n\n## Decisions\n`;
+}
+
+/**
+ * Append a reference entry to the appropriate section (Ideas or Decisions)
  */
 export function appendReferenceToSection(content: string, entry: ReferenceEntry): string {
-  // Ensure References section exists
-  const contentWithSection = ensureReferencesSection(content);
+  // Ensure the appropriate section exists based on type
+  let contentWithSection: string;
+  let sectionName: string;
   
-  // Format the entry
-  const formattedEntry = formatReferenceEntry(entry);
+  if (entry.type === 'idea') {
+    contentWithSection = ensureIdeasSection(content);
+    sectionName = 'Ideas';
+  } else {
+    contentWithSection = ensureDecisionsSection(content);
+    sectionName = 'Decisions';
+  }
+  
+  // Format the entry (without type suffix since section indicates type)
+  const formattedEntry = `- [[${entry.sbId}|${entry.title.trim()}]]`;
   
   // Check if this reference already exists (avoid duplicates)
   if (contentWithSection.includes(`[[${entry.sbId}`)) {
     return contentWithSection; // Already linked
   }
   
-  // Find the ## References section and append entry
-  const refsMatch = contentWithSection.match(/^## References\s*$/m);
-  if (!refsMatch || refsMatch.index === undefined) {
-    throw new Error('Failed to find References section after creation');
+  // Find the section and append entry
+  const sectionRegex = new RegExp(`^## ${sectionName}\\s*$`, 'm');
+  const sectionMatch = contentWithSection.match(sectionRegex);
+  if (!sectionMatch || sectionMatch.index === undefined) {
+    throw new Error(`Failed to find ${sectionName} section after creation`);
   }
   
-  const refsIndex = refsMatch.index + refsMatch[0].length;
+  const sectionIndex = sectionMatch.index + sectionMatch[0].length;
   
   // Find the next section or end of content
-  const afterRefs = contentWithSection.slice(refsIndex);
-  const nextSectionMatch = afterRefs.match(/\n## |\n---\nSource:/);
+  const afterSection = contentWithSection.slice(sectionIndex);
+  const nextSectionMatch = afterSection.match(/\n## |\n---\nSource:/);
   
   if (nextSectionMatch && nextSectionMatch.index !== undefined) {
     // Insert before next section
-    const beforeNext = contentWithSection.slice(0, refsIndex + nextSectionMatch.index);
-    const nextAndAfter = contentWithSection.slice(refsIndex + nextSectionMatch.index);
+    const beforeNext = contentWithSection.slice(0, sectionIndex + nextSectionMatch.index);
+    const nextAndAfter = contentWithSection.slice(sectionIndex + nextSectionMatch.index);
     return `${beforeNext}\n${formattedEntry}${nextAndAfter}`;
   }
   
