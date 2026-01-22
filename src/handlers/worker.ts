@@ -61,12 +61,15 @@ import {
   getFixableReceipt,
   applyFix,
   canApplyFix,
+  detectReclassifyRequest,
+  extractOriginalMessage,
 } from '../components/fix-handler';
 import {
   findMatchingProject,
   type ProjectMatcherConfig,
 } from '../components/project-matcher';
 import type { KnowledgeStoreConfig } from '../components/knowledge-store';
+import { readFile, deleteFile } from '../components/knowledge-store';
 import {
   searchKnowledgeBase,
   type KnowledgeSearchConfig,
@@ -318,13 +321,17 @@ async function processMessage(message: SQSEventMessage): Promise<void> {
 
 /**
  * Handle fix command
+ * 
+ * Supports two modes:
+ * 1. Content fix: "fix: change the title to X" - edits the file content
+ * 2. Reclassification: "fix: this should be a task" - re-processes as new classification
  */
 async function handleFixCommand(
   eventId: string,
   slackContext: SlackContext,
   instruction: string
 ): Promise<void> {
-  log('info', 'Processing fix command', { event_id: eventId });
+  log('info', 'Processing fix command', { event_id: eventId, instruction });
 
   // Get the most recent fixable receipt
   const priorReceipt = await getFixableReceipt(knowledgeConfig, slackContext.user_id);
@@ -343,7 +350,20 @@ async function handleFixCommand(
     return;
   }
 
-  // Apply the fix
+  // Check if this is a reclassification request
+  const reclassifyRequest = detectReclassifyRequest(instruction);
+  
+  if (reclassifyRequest.isReclassify && reclassifyRequest.targetClassification) {
+    await handleReclassification(
+      eventId,
+      slackContext,
+      priorReceipt!,
+      reclassifyRequest.targetClassification
+    );
+    return;
+  }
+
+  // Standard content fix
   const systemPrompt = await getSystemPrompt();
   const fixResult = await applyFix(
     knowledgeConfig,
@@ -393,6 +413,112 @@ async function handleFixCommand(
 
   await markCompleted(idempotencyConfig, eventId);
   log('info', 'Fix completed', { event_id: eventId, commit_id: fixResult.commitId });
+}
+
+/**
+ * Handle reclassification request
+ * 
+ * Re-processes the original message with the new classification.
+ * For tasks, this sends to OmniFocus. For other types, creates new file.
+ */
+async function handleReclassification(
+  eventId: string,
+  slackContext: SlackContext,
+  priorReceipt: Awaited<ReturnType<typeof getFixableReceipt>>,
+  targetClassification: Classification
+): Promise<void> {
+  if (!priorReceipt) return;
+
+  log('info', 'Processing reclassification', {
+    event_id: eventId,
+    from: priorReceipt.classification,
+    to: targetClassification,
+  });
+
+  // Get the original file content to extract the message
+  const filePath = priorReceipt.files[0];
+  const fileContent = await readFile(knowledgeConfig, filePath);
+  
+  if (!fileContent) {
+    await sendSlackReply(
+      { botTokenParam: BOT_TOKEN_PARAM },
+      {
+        channel: slackContext.channel_id,
+        text: formatErrorReply('Could not read original entry'),
+        thread_ts: slackContext.thread_ts,
+      }
+    );
+    await markFailed(idempotencyConfig, eventId, 'Could not read original entry');
+    return;
+  }
+
+  // Extract the original message
+  const originalMessage = extractOriginalMessage(fileContent, filePath);
+  
+  log('info', 'Extracted original message for reclassification', {
+    event_id: eventId,
+    original_message: originalMessage.substring(0, 100),
+  });
+
+  // Re-invoke the classifier with the original message, forcing the classification
+  const systemPrompt = await getSystemPrompt();
+  const agentResult = await invokeAgentRuntime(agentConfig, {
+    prompt: `Classify this as "${targetClassification}": ${originalMessage}`,
+    system_prompt: systemPrompt.content,
+    session_id: `${slackContext.channel_id}#${slackContext.user_id}`,
+  });
+
+  if (!agentResult.success || !agentResult.actionPlan) {
+    await sendSlackReply(
+      { botTokenParam: BOT_TOKEN_PARAM },
+      {
+        channel: slackContext.channel_id,
+        text: formatErrorReply('Failed to reclassify'),
+        thread_ts: slackContext.thread_ts,
+      }
+    );
+    await markFailed(idempotencyConfig, eventId, 'Reclassification failed');
+    return;
+  }
+
+  // Override classification with user's choice
+  const actionPlan = {
+    ...agentResult.actionPlan,
+    classification: targetClassification,
+    confidence: 1.0, // User confirmed
+  };
+
+  // For non-inbox reclassifications, delete the old file first
+  // (inbox entries are append-only, so we leave them)
+  if (priorReceipt.classification !== 'inbox' && targetClassification !== priorReceipt.classification) {
+    try {
+      await deleteFile(
+        knowledgeConfig,
+        filePath,
+        `Reclassify: ${priorReceipt.classification} → ${targetClassification}`
+      );
+      log('info', 'Deleted old file for reclassification', {
+        event_id: eventId,
+        deleted_file: filePath,
+      });
+    } catch (error) {
+      log('warn', 'Failed to delete old file during reclassification', {
+        event_id: eventId,
+        file: filePath,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+      // Continue anyway - the new file will still be created
+    }
+  }
+
+  // Execute with the new classification
+  await executeAndFinalize(eventId, slackContext, actionPlan, systemPrompt);
+
+  log('info', 'Reclassification completed', {
+    event_id: eventId,
+    from: priorReceipt.classification,
+    to: targetClassification,
+  });
 }
 
 /**

@@ -28,6 +28,7 @@ export {
   readFile,
   writeFile,
   appendToFile,
+  deleteFile,
   generateFilePath,
   generateSlug,
   createKnowledgeFile,
@@ -142,8 +143,11 @@ export {
   getFixableReceipt,
   applyFix,
   canApplyFix,
+  detectReclassifyRequest,
+  extractOriginalMessage,
   type FixCommand,
   type FixResult,
+  type ReclassifyRequest,
 } from './fix-handler';
 
 // Markdown Templates

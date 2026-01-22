@@ -768,6 +768,8 @@ import {
   parseFixCommand,
   isFixCommand,
   canApplyFix,
+  detectReclassifyRequest,
+  extractOriginalMessage,
 } from '../../src/components/fix-handler';
 
 describe('Fix Handler', () => {
@@ -830,7 +832,7 @@ describe('Fix Handler', () => {
     it('returns false for null receipt', () => {
       const result = canApplyFix(null);
       expect(result.canFix).toBe(false);
-      expect(result.reason).toContain('No recent entry');
+      expect(result.reason).toContain('No recent fixable entry');
     });
 
     it('returns false for fix receipt', () => {
@@ -874,6 +876,92 @@ describe('Fix Handler', () => {
       } as any;
       const result = canApplyFix(receipt);
       expect(result.canFix).toBe(true);
+    });
+  });
+
+  describe('detectReclassifyRequest', () => {
+    it('detects "this should be a task"', () => {
+      const result = detectReclassifyRequest('this should be a task');
+      expect(result.isReclassify).toBe(true);
+      expect(result.targetClassification).toBe('task');
+    });
+
+    it('detects "should be task" without "this"', () => {
+      const result = detectReclassifyRequest('should be task');
+      expect(result.isReclassify).toBe(true);
+      expect(result.targetClassification).toBe('task');
+    });
+
+    it('detects "make this an idea"', () => {
+      const result = detectReclassifyRequest('make this an idea');
+      expect(result.isReclassify).toBe(true);
+      expect(result.targetClassification).toBe('idea');
+    });
+
+    it('detects "this is a decision"', () => {
+      const result = detectReclassifyRequest('this is a decision');
+      expect(result.isReclassify).toBe(true);
+      expect(result.targetClassification).toBe('decision');
+    });
+
+    it('detects "reclassify as project"', () => {
+      const result = detectReclassifyRequest('reclassify as project');
+      expect(result.isReclassify).toBe(true);
+      expect(result.targetClassification).toBe('project');
+    });
+
+    it('detects "change to inbox"', () => {
+      const result = detectReclassifyRequest('change to inbox');
+      expect(result.isReclassify).toBe(true);
+      expect(result.targetClassification).toBe('inbox');
+    });
+
+    it('returns false for content fixes', () => {
+      const result = detectReclassifyRequest('change the title to something else');
+      expect(result.isReclassify).toBe(false);
+    });
+
+    it('returns false for invalid classification', () => {
+      const result = detectReclassifyRequest('this should be a banana');
+      expect(result.isReclassify).toBe(false);
+    });
+  });
+
+  describe('extractOriginalMessage', () => {
+    it('extracts message from inbox entry', () => {
+      const content = `# 2026-01-21
+
+- 10:15: I need to research IAM billing visibility control`;
+      const result = extractOriginalMessage(content, '00-inbox/2026-01-21.md');
+      expect(result).toBe('I need to research IAM billing visibility control');
+    });
+
+    it('extracts last entry from multi-entry inbox', () => {
+      const content = `# 2026-01-21
+
+- 09:00: First note
+- 10:15: Second note
+- 11:30: Third note`;
+      const result = extractOriginalMessage(content, '00-inbox/2026-01-21.md');
+      expect(result).toBe('Third note');
+    });
+
+    it('extracts context from idea note', () => {
+      const content = `# Add a water feature
+
+## Context
+Enhance the landscaping with a water feature for the backyard.
+
+## Key Points
+- Point 1`;
+      const result = extractOriginalMessage(content, '10-ideas/test.md');
+      expect(result).toBe('Enhance the landscaping with a water feature for the backyard.');
+    });
+
+    it('falls back to title if no context', () => {
+      const content = `# My Great Idea`;
+      const result = extractOriginalMessage(content, '10-ideas/test.md');
+      expect(result).toBe('My Great Idea');
     });
   });
 });

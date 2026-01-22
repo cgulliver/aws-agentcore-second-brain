@@ -199,6 +199,57 @@ export async function appendToFile(
 }
 
 /**
+ * Delete a file from the repository
+ * 
+ * Used for reclassification - removes the old file before creating new one
+ */
+export async function deleteFile(
+  config: KnowledgeStoreConfig,
+  filePath: string,
+  commitMessage: string
+): Promise<CommitResult> {
+  let attempts = 0;
+
+  while (attempts < MAX_RETRIES) {
+    try {
+      const parentCommitId = await getLatestCommitId(config);
+
+      const response = await codecommitClient.send(
+        new CreateCommitCommand({
+          repositoryName: config.repositoryName,
+          branchName: config.branchName || DEFAULT_BRANCH,
+          parentCommitId: parentCommitId || undefined,
+          authorName: 'Second Brain Agent',
+          email: 'agent@second-brain.local',
+          commitMessage,
+          deleteFiles: [
+            {
+              filePath,
+            },
+          ],
+        })
+      );
+
+      return {
+        commitId: response.commitId || '',
+        filePath,
+        parentCommitId,
+      };
+    } catch (error) {
+      if (error instanceof ParentCommitIdOutdatedException) {
+        attempts++;
+        if (attempts < MAX_RETRIES) {
+          continue;
+        }
+      }
+      throw error;
+    }
+  }
+
+  throw new Error(`Failed to delete file after ${MAX_RETRIES} retries`);
+}
+
+/**
  * Generate file path based on classification
  * 
  * Validates: Requirements 11.1-11.4, 29.3, 3.1, 3.2, 3.3

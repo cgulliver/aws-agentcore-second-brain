@@ -171,11 +171,18 @@ export async function findReceiptByEventId(
  * Find most recent receipt for a user
  * 
  * Validates: Requirements 10.2
+ * 
+ * @param excludeNonFixable - If true, excludes receipts that cannot be fixed:
+ *   - fix: Cannot fix a fix entry
+ *   - clarify: Cannot fix a clarification
+ *   - task: Tasks are sent to OmniFocus, not stored in CodeCommit
+ *   - query: Queries don't create files to fix
+ *   - status_update: Status updates modify existing files differently
  */
 export async function findMostRecentReceipt(
   config: KnowledgeStoreConfig,
   userId: string,
-  excludeFix: boolean = true
+  excludeNonFixable: boolean = true
 ): Promise<Receipt | null> {
   const content = await readFile(config, RECEIPTS_FILE);
 
@@ -187,6 +194,9 @@ export async function findMostRecentReceipt(
   let mostRecent: Receipt | null = null;
   let mostRecentTime = 0;
 
+  // Classifications that cannot be fixed
+  const nonFixableTypes = ['fix', 'clarify', 'task', 'query', 'status_update'];
+
   for (const line of lines) {
     try {
       const receipt = parseReceipt(line);
@@ -196,8 +206,8 @@ export async function findMostRecentReceipt(
         continue;
       }
 
-      // Optionally exclude fix receipts
-      if (excludeFix && receipt.classification === 'fix') {
+      // Optionally exclude non-fixable receipts
+      if (excludeNonFixable && nonFixableTypes.includes(receipt.classification)) {
         continue;
       }
 

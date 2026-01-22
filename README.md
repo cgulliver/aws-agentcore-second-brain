@@ -2,7 +2,7 @@
 
 > A personal knowledge capture system that turns Slack DMs into organized notes, decisions, and tasks.
 
-[![Tests](https://img.shields.io/badge/tests-417%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-429%20passing-brightgreen)]()
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue)]()
 [![AWS CDK](https://img.shields.io/badge/AWS%20CDK-2.x-orange)]()
 [![License](https://img.shields.io/badge/license-MIT-green)]()
@@ -155,7 +155,7 @@ Ideas, decisions, and projects include:
 - **Smart Classification** - AI-powered categorization with confidence scoring
 - **Memory-Based Item Lookup** - AgentCore Memory provides item context for intelligent linking
 - **Clarification Flow** - Asks when uncertain, remembers context
-- **Fix Command** - Correct mistakes with `fix: change the title to...`
+- **Fix Command** - Correct mistakes with `fix: change the title to...` or reclassify with `fix: this should be a task`
 - **Git-Backed Storage** - Full history, diffable, portable Markdown
 - **Obsidian/Git Sync** - Clone the repo locally for use with Obsidian or any Markdown editor
 - **Task Manager Integration** - Tasks emailed to any mail drop (OmniFocus, Todoist, Things, etc.)

@@ -122,11 +122,20 @@ Starting a project to organize the garage
 
 Actionable items that should go to your task manager.
 
-**Trigger words:** "need to", "have to", "must", "should", "todo", "task"
+**Strong trigger phrases (always classified as task):**
+- "I need to..."
+- "I should..."
+- "I have to..."
+- "Remind me to..."
+- "Don't forget to..."
+- "Todo:" or "Task:" prefix
+
+These phrases trigger task classification regardless of additional context or explanation.
 
 **Examples:**
 ```
 I need to call the insurance company about the claim
+I need to research IAM billing visibility control. Specifically in AWS organizations, blocking all principles including root user
 Task: schedule the annual furnace inspection
 Don't forget to pick up the dry cleaning tomorrow
 ```
@@ -318,20 +327,49 @@ Made a mistake? Use the fix command to correct the most recent entry.
 fix: <instruction>
 ```
 
-### Examples
+### Content Fixes
+
+Edit the content of the most recent entry:
 
 ```
 fix: change the title to "Q2 Budget Review"
 fix: add a note about the deadline being flexible
 fix: remove the last bullet point
-fix: this should have been classified as a decision
 ```
+
+### Reclassification
+
+Reclassify an entry to a different type. This re-processes the original message with the new classification, including all side effects (email for tasks, project linking, etc.):
+
+```
+fix: this should be a task
+fix: make this an idea
+fix: this is a decision
+fix: reclassify as project
+```
+
+**Example flow:**
+```
+You: I need to research IAM billing visibility control. Specifically in AWS organizations...
+Bot: Captured as inbox
+     Files: 00-inbox/2026-01-22.md
+
+You: fix: this should be a task
+Bot: Reclassified as task
+     Task sent to OmniFocus: "Research IAM billing visibility control"
+```
+
+When reclassifying to task, the system:
+- Extracts the original message from the file
+- Re-invokes the classifier with the forced classification
+- Sends the task to OmniFocus via email
+- Links to any matching projects via Memory context
 
 ### Limitations
 
-- Can only fix the most recent non-task entry
+- Can only fix the most recent fixable entry (inbox, idea, decision, project)
 - Cannot fix tasks (they're already sent to OmniFocus)
-- Cannot fix clarification requests
+- Cannot fix queries, clarifications, or status updates
 
 ## Best Practices
 

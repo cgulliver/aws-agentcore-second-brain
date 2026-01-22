@@ -102,6 +102,16 @@ B) query intent signals
 C) capture intent signals
 - declarative notes, FYI, "I need to", "todo", "I've decided", "idea:"
 
+**Strong task signals (classify as task regardless of additional context):**
+- "I need to..." → task (even with detailed explanations following)
+- "I should..." → task
+- "I have to..." → task
+- "Remind me to..." → task
+- "Don't forget to..." → task
+- "Todo:" or "Task:" prefix → task
+
+The presence of additional context or explanation after these phrases does NOT change the classification. "I need to research X. Here's why..." is still a task.
+
 Default:
 - If ambiguous, default intent to "capture" (safe).
 
