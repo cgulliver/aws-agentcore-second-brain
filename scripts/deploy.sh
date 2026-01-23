@@ -7,11 +7,17 @@
 #   --profile <aws-profile>    AWS CLI profile to use
 #   --sender-email <email>     SES verified sender email
 #   --mode <security-mode>     Security mode (mtls-hmac, mtls-only, hmac-only)
+#   --model <model-id>         Bedrock model for classification (default: amazon.nova-lite-v1:0)
 #
 # Security modes:
 #   mtls-hmac  - API Gateway with mTLS + HMAC verification (default, most secure)
 #   mtls-only  - API Gateway with mTLS only
 #   hmac-only  - Lambda Function URL with HMAC only (simplest setup)
+#
+# Model options:
+#   amazon.nova-micro-v1:0              - Cheapest, fastest
+#   amazon.nova-lite-v1:0               - Default, good balance
+#   anthropic.claude-3-5-haiku-20241022-v1:0 - Best quality
 #
 # Prerequisites:
 # 1. AWS CLI configured with appropriate credentials
@@ -24,6 +30,7 @@ set -e
 PROFILE_ARG=""
 SENDER_EMAIL=""
 SECURITY_MODE=""
+CLASSIFIER_MODEL=""
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -40,9 +47,13 @@ while [[ $# -gt 0 ]]; do
       SECURITY_MODE="$2"
       shift 2
       ;;
+    --model)
+      CLASSIFIER_MODEL="$2"
+      shift 2
+      ;;
     *)
       echo "Unknown option: $1"
-      echo "Usage: ./scripts/deploy.sh [--profile <profile>] [--sender-email <email>] [--mode <mode>]"
+      echo "Usage: ./scripts/deploy.sh [--profile <profile>] [--sender-email <email>] [--mode <mode>] [--model <model-id>]"
       exit 1
       ;;
   esac
@@ -68,6 +79,12 @@ if [ -n "$SECURITY_MODE" ]; then
   echo "Using security mode: $SECURITY_MODE"
 else
   echo "Using default security mode: mtls-hmac"
+fi
+if [ -n "$CLASSIFIER_MODEL" ]; then
+  CONTEXT_ARG="$CONTEXT_ARG -c classifierModel=$CLASSIFIER_MODEL"
+  echo "Using classifier model: $CLASSIFIER_MODEL"
+else
+  echo "Using default classifier model: amazon.nova-lite-v1:0"
 fi
 
 echo "=========================================="

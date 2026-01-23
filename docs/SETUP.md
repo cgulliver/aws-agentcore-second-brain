@@ -404,3 +404,80 @@ aws cloudformation describe-stacks \
 
 - [Usage Guide](./USAGE.md)
 - [Troubleshooting](./TROUBLESHOOTING.md)
+
+---
+
+## Cloning the Knowledge Repository
+
+After deployment, you can clone the CodeCommit knowledge repository to view your captured items locally with Obsidian or any Markdown editor.
+
+### Install git-remote-codecommit
+
+```bash
+# Using pip
+pip install git-remote-codecommit
+
+# Or using a virtual environment
+python -m venv ~/py
+source ~/py/bin/activate
+pip install git-remote-codecommit
+```
+
+### Clone the Repository
+
+```bash
+# Activate virtualenv if using one
+source ~/py/bin/activate
+
+# Clone (replace REGION with your AWS region, e.g., us-east-1)
+git clone codecommit::REGION://second-brain-knowledge ~/SecondBrain
+```
+
+### Open in Obsidian
+
+1. Open Obsidian
+2. Click "Open folder as vault"
+3. Select `~/SecondBrain`
+4. Your captured ideas, decisions, and projects appear as linked notes
+
+### Keeping in Sync
+
+Pull regularly to see new captures:
+```bash
+cd ~/SecondBrain
+git pull
+```
+
+**Note:** The knowledge repo is read-only from Obsidian's perspective. All updates flow through Slack to avoid merge conflicts. Use the `fix:` command in Slack to make corrections.
+
+---
+
+## Architecture Notes
+
+### Bedrock AgentCore
+
+The system uses Bedrock AgentCore for:
+- **Runtime**: Hosts the classifier model (Nova Lite by default)
+- **Memory**: Stores item metadata for semantic retrieval and linking
+
+Memory is automatically provisioned during deployment. Items are synced from CodeCommit to Memory on each request, enabling the classifier to find related projects/ideas without explicit tool calls.
+
+### Model Selection
+
+Configure the classifier model at deploy time:
+
+```bash
+# Nova Lite (default, good balance)
+./scripts/deploy.sh --sender-email you@example.com
+
+# Nova Micro (cheapest)
+./scripts/deploy.sh --sender-email you@example.com --model amazon.nova-micro-v1:0
+
+# Claude Haiku (best quality)
+./scripts/deploy.sh --sender-email you@example.com --model anthropic.claude-3-5-haiku-20241022-v1:0
+```
+
+Or via CDK context:
+```bash
+npx cdk deploy --all -c classifierModel=amazon.nova-micro-v1:0
+```

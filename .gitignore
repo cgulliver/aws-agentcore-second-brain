@@ -30,6 +30,9 @@ Thumbs.db
 # Test coverage
 coverage/
 
+# Hypothesis test cache
+.hypothesis/
+
 # Logs
 *.log
 npm-debug.log*
