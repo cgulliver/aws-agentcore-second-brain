@@ -1,4 +1,0 @@
-# file: /Users/cworrell/MyWorkSpace/SecondBrain/agent/item_sync.py
-# hypothesis_version: 6.150.2
-
-['---\n', '.gitkeep', '.md', '/', '10-ideas', '10-ideas/', '20-decisions', '20-decisions/', '30-projects', '30-projects/', 'A', 'ASSISTANT', 'D', 'KNOWLEDGE_REPO_NAME', 'M', '\\n---\\n', '^sb-[a-f0-9]{7}$', 'absolutePath', 'afterBlob', 'beforeBlob', 'branch', 'changeType', 'change_type', 'codecommit', 'commitId', 'content', 'decision', 'differences', 'fileContent', 'files', 'id', 'idea', 'last synced commit', 'main', 'memories', 'path', 'project', 'sb-[a-f0-9]{7}', 'status', 'tags', 'title', 'type', 'us-east-1', 'utf-8']

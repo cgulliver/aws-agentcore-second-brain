@@ -1,4 +1,0 @@
-# file: /Users/cworrell/MyWorkSpace/SecondBrain/agent/item_sync.py
-# hypothesis_version: 6.150.2
-
-['---\n', '10-ideas', '10-ideas/', '20-decisions', '20-decisions/', '30-projects', '30-projects/', 'KNOWLEDGE_REPO_NAME', '\\n---\\n', '^sb-[a-f0-9]{7}$', 'codecommit', 'decision', 'id', 'idea', 'project', 'status', 'tags', 'title', 'type', 'us-east-1']
