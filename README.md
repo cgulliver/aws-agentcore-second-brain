@@ -164,7 +164,7 @@ Ideas, decisions, and projects include:
 - **Fix Command** - Correct mistakes with `fix: change the title to...` or reclassify with `fix: this should be a task`
 - **Git-Backed Storage** - Full history, diffable, portable Markdown
 - **Obsidian/Git Sync** - Clone the repo locally for use with Obsidian or any Markdown editor
-- **Task Manager Integration** - Tasks emailed to any mail drop (OmniFocus, Todoist, Things, etc.)
+- **Task Manager Integration** - Tasks emailed to any mail drop (tested with OmniFocus; should work with Todoist, Things, etc.)
 - **Task-Project Linking** - Automatically link tasks to projects via natural language
 - **Multi-Item Messages** - Process multiple items in a single message
 - **Project Status Management** - Update project status via Slack ("pause project X", "mark Y complete")
@@ -179,7 +179,7 @@ Ideas, decisions, and projects include:
 - AWS CDK CLI (`npm install -g aws-cdk`)
 - AWS CLI configured
 - Slack workspace (admin access)
-- (Optional) OmniFocus with Mail Drop configured for task routing
+- (Optional) Task manager with Mail Drop (tested with OmniFocus; should work with Todoist, Things, etc.)
 
 ### Deploy
 
@@ -347,11 +347,13 @@ npx cdk deploy SecondBrainCoreStack -c classifierModel=amazon.nova-micro-v1:0
 npx cdk deploy SecondBrainCoreStack -c classifierModel=anthropic.claude-3-5-haiku-20241022-v1:0
 ```
 
-| Model | Model ID | Input/1M | Output/1M | Notes |
-|-------|----------|----------|-----------|-------|
-| Nova Micro | `amazon.nova-micro-v1:0` | $0.035 | $0.14 | Fastest, cheapest |
-| Nova Lite | `amazon.nova-lite-v1:0` | $0.06 | $0.24 | Default, good balance, better multi-item detection |
-| Claude 3.5 Haiku | `anthropic.claude-3-5-haiku-20241022-v1:0` | $0.80 | $4.00 | Best quality |
+| Model | Model ID | Notes |
+|-------|----------|-------|
+| Nova Micro | `amazon.nova-micro-v1:0` | Fastest, lowest cost |
+| Nova Lite | `amazon.nova-lite-v1:0` | Default, good balance |
+| Claude 3.5 Haiku | `anthropic.claude-3-5-haiku-20241022-v1:0` | Higher capability, higher cost |
+
+See [Bedrock pricing](https://aws.amazon.com/bedrock/pricing/) for current rates.
 
 ### Environment Variables
 
