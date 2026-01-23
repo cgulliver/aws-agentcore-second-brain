@@ -124,7 +124,7 @@ Bot: Captured as decision
                                               │                                  │
                                               ▼                                  ▼
                     ┌─────────────────────────────────────┐       ┌─────────────────┐
-                    │  Obsidian / Working Copy / CLI      │       │  Task Manager   │
+                    │  Obsidian / Working Copy / CLI      │       │   OmniFocus     │
                     │         (read-only sync)            │       │   (Mail Drop)   │
                     └─────────────────────────────────────┘       └─────────────────┘
 ```
