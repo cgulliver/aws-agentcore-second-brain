@@ -76,6 +76,22 @@ class SyncResult:
     error: Optional[str] = None
 
 
+@dataclass
+class HealthReport:
+    """
+    Health check report comparing CodeCommit and Memory item counts.
+    
+    Validates: Requirements 5.1, 5.2, 5.3, 5.4, 5.5
+    """
+    codecommit_count: int
+    memory_count: int
+    in_sync: bool
+    last_sync_timestamp: Optional[str]
+    last_sync_commit_id: Optional[str]
+    missing_in_memory: List[str]  # sb_ids missing in Memory
+    extra_in_memory: List[str]    # sb_ids in Memory but not in CodeCommit
+
+
 class ItemSyncModule:
     """
     Syncs CodeCommit knowledge items to AgentCore Memory.
@@ -449,7 +465,310 @@ class ItemSyncModule:
         print(f"Info: Item {sb_id} marked for deletion (will expire naturally)")
         return True
 
+    def sync_single_item(self, actor_id: str, file_path: str, content: str) -> SyncResult:
+        """
+        Sync a single item to Memory.
+        
+        Used for event-driven sync after commits. This method extracts metadata
+        from the provided content and stores it in Memory without needing to
+        fetch from CodeCommit.
+        
+        Args:
+            actor_id: User/actor ID for scoped storage
+            file_path: Path to the committed file (e.g., "10-ideas/2025-01-20__title__sb-1234567.md")
+            content: File content with YAML front matter
+            
+        Returns:
+            SyncResult with success status and items_synced count
+            
+        Validates: Requirements 1.2, 1.3
+        """
+        try:
+            # Extract metadata from content
+            metadata = self.extract_item_metadata(file_path, content)
+            
+            if not metadata:
+                return SyncResult(
+                    success=False,
+                    items_synced=0,
+                    error=f"Failed to extract metadata from {file_path}",
+                )
+            
+            # Store in Memory
+            if self.store_item_in_memory(actor_id, metadata):
+                print(f"Info: Synced item {metadata.sb_id} to Memory")
+                return SyncResult(
+                    success=True,
+                    items_synced=1,
+                    items_deleted=0,
+                )
+            else:
+                return SyncResult(
+                    success=False,
+                    items_synced=0,
+                    error=f"Failed to store item {metadata.sb_id} in Memory",
+                )
+                
+        except Exception as e:
+            print(f"Warning: Failed to sync single item: {e}")
+            return SyncResult(
+                success=False,
+                items_synced=0,
+                error=str(e),
+            )
+
+    def get_all_codecommit_items(self) -> List[ItemMetadata]:
+        """
+        Retrieve all items from CodeCommit for health check comparison.
+        
+        Scans all item folders (ideas, decisions, projects) and extracts
+        metadata from each markdown file.
+        
+        Returns:
+            List of ItemMetadata for all items in CodeCommit
+            
+        Validates: Requirements 5.1
+        """
+        items = []
+        
+        try:
+            # Get current HEAD commit
+            head_commit = self.get_codecommit_head()
+            if not head_commit:
+                print("Warning: Failed to get CodeCommit HEAD for health check")
+                return items
+            
+            # Get all item files
+            all_files = self._get_all_item_files(head_commit)
+            
+            for file_info in all_files:
+                path = file_info['path']
+                content = self.get_file_content(path, head_commit)
+                if content:
+                    metadata = self.extract_item_metadata(path, content)
+                    if metadata:
+                        items.append(metadata)
+            
+            return items
+            
+        except Exception as e:
+            print(f"Warning: Failed to get CodeCommit items: {e}")
+            return items
     
+    def get_all_memory_items(self, actor_id: str) -> List[ItemMetadata]:
+        """
+        Retrieve all items from Memory for an actor.
+        
+        Used for health check comparison. Searches Memory for all stored
+        items and parses their metadata from the stored event text.
+        
+        Args:
+            actor_id: User/actor ID for scoped storage
+            
+        Returns:
+            List of ItemMetadata for all items in Memory
+            
+        Validates: Requirements 5.2
+        """
+        items = []
+        
+        if not self.memory_client:
+            print("Warning: Memory client unavailable for health check")
+            return items
+        
+        try:
+            # Search for all items in Memory using a broad query
+            # We search for "Item:" which is the prefix of all stored items
+            response = self.memory_client.retrieve_memories(
+                memory_id=self.memory_id,
+                actor_id=actor_id,
+                query='Item Type ID Path',  # Broad query to match item metadata
+                top_k=1000,  # Get as many as possible
+            )
+            
+            if not response or 'memories' not in response:
+                return items
+            
+            for memory in response.get('memories', []):
+                content = memory.get('content', '')
+                
+                # Parse item metadata from stored text format
+                # Format: "Item: <title>\nID: <sb_id>\nType: <type>\nPath: <path>\n..."
+                metadata = self._parse_memory_item(content)
+                if metadata:
+                    items.append(metadata)
+            
+            return items
+            
+        except Exception as e:
+            print(f"Warning: Failed to get Memory items: {e}")
+            return items
+    
+    def _parse_memory_item(self, content: str) -> Optional[ItemMetadata]:
+        """
+        Parse ItemMetadata from Memory event text format.
+        
+        Args:
+            content: Memory event content in the format produced by to_memory_text()
+            
+        Returns:
+            ItemMetadata or None if parsing fails
+        """
+        try:
+            # Skip sync markers and other non-item content
+            if 'Last synced commit:' in content:
+                return None
+            
+            # Parse the stored format
+            lines = content.strip().split('\n')
+            
+            title = None
+            sb_id = None
+            item_type = None
+            path = None
+            tags = []
+            status = None
+            
+            for line in lines:
+                if line.startswith('Item: '):
+                    title = line[6:].strip()
+                elif line.startswith('ID: '):
+                    sb_id = line[4:].strip()
+                elif line.startswith('Type: '):
+                    item_type = line[6:].strip()
+                elif line.startswith('Path: '):
+                    path = line[6:].strip()
+                elif line.startswith('Tags: '):
+                    tags_str = line[6:].strip()
+                    tags = [t.strip() for t in tags_str.split(',') if t.strip()]
+                elif line.startswith('Status: '):
+                    status = line[8:].strip()
+            
+            # Validate required fields
+            if not all([title, sb_id, item_type, path]):
+                return None
+            
+            # Validate sb_id format
+            if not re.match(r'^sb-[a-f0-9]{7}$', sb_id):
+                return None
+            
+            return ItemMetadata(
+                sb_id=sb_id,
+                title=title,
+                item_type=item_type,
+                path=path,
+                tags=tags,
+                status=status,
+            )
+            
+        except Exception as e:
+            print(f"Warning: Failed to parse memory item: {e}")
+            return None
+    
+    def _get_sync_marker_details(self, actor_id: str) -> tuple:
+        """
+        Get sync marker details including timestamp.
+        
+        Args:
+            actor_id: User/actor ID
+            
+        Returns:
+            Tuple of (commit_id, timestamp) or (None, None) if not found
+            
+        Validates: Requirements 5.4
+        """
+        if not self.memory_client:
+            return None, None
+        
+        try:
+            response = self.memory_client.retrieve_memories(
+                memory_id=self.memory_id,
+                actor_id=actor_id,
+                namespace=f'/sync/{actor_id}',
+                query='last synced commit',
+                top_k=1,
+            )
+            
+            if response and 'memories' in response and response['memories']:
+                memory = response['memories'][0]
+                content = memory.get('content', '')
+                
+                # Extract commit ID
+                commit_match = re.search(r'Last synced commit: ([a-f0-9]+)', content)
+                commit_id = commit_match.group(1) if commit_match else None
+                
+                # Get timestamp from memory metadata if available
+                timestamp = memory.get('timestamp', memory.get('created_at'))
+                
+                return commit_id, timestamp
+            
+            return None, None
+            
+        except Exception as e:
+            print(f"Warning: Failed to get sync marker details: {e}")
+            return None, None
+    
+    def get_health_report(self, actor_id: str) -> HealthReport:
+        """
+        Compare CodeCommit and Memory item counts.
+        
+        Counts items in both CodeCommit (ideas, decisions, projects folders)
+        and Memory, then identifies any discrepancies between them.
+        
+        Args:
+            actor_id: User/actor ID for scoped storage
+            
+        Returns:
+            HealthReport with counts and discrepancies
+            
+        Validates: Requirements 5.1, 5.2, 5.3, 5.4, 5.5
+        """
+        try:
+            # Get all items from CodeCommit
+            codecommit_items = self.get_all_codecommit_items()
+            codecommit_sb_ids = {item.sb_id for item in codecommit_items}
+            
+            # Get all items from Memory
+            memory_items = self.get_all_memory_items(actor_id)
+            memory_sb_ids = {item.sb_id for item in memory_items}
+            
+            # Calculate discrepancies
+            missing_in_memory = list(codecommit_sb_ids - memory_sb_ids)
+            extra_in_memory = list(memory_sb_ids - codecommit_sb_ids)
+            
+            # Limit to 10 items as per requirement 5.5
+            missing_in_memory = missing_in_memory[:10]
+            extra_in_memory = extra_in_memory[:10]
+            
+            # Determine if in sync
+            in_sync = len(missing_in_memory) == 0 and len(extra_in_memory) == 0
+            
+            # Get sync marker details
+            last_sync_commit_id, last_sync_timestamp = self._get_sync_marker_details(actor_id)
+            
+            return HealthReport(
+                codecommit_count=len(codecommit_items),
+                memory_count=len(memory_items),
+                in_sync=in_sync,
+                last_sync_timestamp=last_sync_timestamp,
+                last_sync_commit_id=last_sync_commit_id,
+                missing_in_memory=missing_in_memory,
+                extra_in_memory=extra_in_memory,
+            )
+            
+        except Exception as e:
+            print(f"Warning: Failed to generate health report: {e}")
+            # Return a report indicating failure
+            return HealthReport(
+                codecommit_count=0,
+                memory_count=0,
+                in_sync=False,
+                last_sync_timestamp=None,
+                last_sync_commit_id=None,
+                missing_in_memory=[],
+                extra_in_memory=[],
+            )
+
     def sync_items(self, actor_id: str) -> SyncResult:
         """
         Sync items from CodeCommit to Memory for the given actor.

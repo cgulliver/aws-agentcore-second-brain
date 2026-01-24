@@ -130,6 +130,8 @@ B) query intent signals
 - Any issues noticed (missing fields, etc.)
 Format as a concise status report in query_response.
 
+**CRITICAL: Only report items that appear in your context. Never invent or hallucinate items.**
+
 C) capture intent signals
 - declarative notes, FYI, "I need to", "todo", "I've decided", "idea:"
 

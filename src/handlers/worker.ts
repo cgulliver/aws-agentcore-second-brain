@@ -96,6 +96,15 @@ import {
   appendTaskLog,
   appendReferenceLog,
 } from '../components/task-logger';
+import {
+  invokeSyncItem,
+  invokeDeleteItem,
+  invokeSyncAll,
+  invokeHealthCheck,
+  type SyncInvokerConfig,
+  type SyncResponse,
+  type HealthReport,
+} from '../components/sync-invoker';
 import { log, redactPII } from './logging';
 import { createHash } from 'crypto';
 
@@ -110,6 +119,7 @@ const CONVERSATION_TTL_PARAM = process.env.CONVERSATION_TTL_PARAM || '/second-br
 const SES_FROM_EMAIL = process.env.SES_FROM_EMAIL || 'noreply@example.com';
 const EMAIL_MODE = process.env.EMAIL_MODE || 'live';
 const AWS_REGION = process.env.AWS_REGION || 'us-east-1';
+const SYNC_LAMBDA_ARN = process.env.SYNC_LAMBDA_ARN || '';
 
 // Configuration objects
 const idempotencyConfig: IdempotencyConfig = {
@@ -145,6 +155,12 @@ const projectMatcherConfig: ProjectMatcherConfig = {
   minConfidence: 0.5,
   autoLinkConfidence: 0.7,
   maxCandidates: 3,
+};
+
+// Sync invoker configuration
+const syncConfig: SyncInvokerConfig = {
+  syncLambdaArn: SYNC_LAMBDA_ARN,
+  region: AWS_REGION,
 };
 
 // Cached system prompt
@@ -211,6 +227,20 @@ async function processMessage(message: SQSEventMessage): Promise<void> {
     const fixCommand = parseFixCommand(message_text);
     if (fixCommand.isFixCommand) {
       await handleFixCommand(event_id, slackContext, fixCommand.instruction);
+      return;
+    }
+
+    // Step 2.5: Check for sync command
+    // Validates: Requirements 2.2
+    if (isSyncCommand(message_text)) {
+      await handleSyncCommand(event_id, slackContext);
+      return;
+    }
+
+    // Step 2.6: Check for health command
+    // Validates: Requirements 5.1
+    if (isHealthCommand(message_text)) {
+      await handleHealthCommand(event_id, slackContext);
       return;
     }
 
@@ -416,6 +446,315 @@ async function handleFixCommand(
 }
 
 /**
+ * Check if message is a sync command (case-insensitive)
+ * 
+ * Validates: Requirements 2.2
+ */
+function isSyncCommand(messageText: string): boolean {
+  return messageText.trim().toLowerCase() === 'sync';
+}
+
+/**
+ * Check if message is a health command (case-insensitive)
+ * 
+ * Validates: Requirements 5.1
+ */
+function isHealthCommand(messageText: string): boolean {
+  return messageText.trim().toLowerCase() === 'health';
+}
+
+/**
+ * Format sync result for Slack reply
+ * 
+ * Validates: Requirements 2.6
+ */
+function formatSyncResultForSlack(result: SyncResponse): string {
+  if (result.success) {
+    const lines = [
+      '✅ Sync complete',
+      `• Items synced: ${result.itemsSynced}`,
+      `• Items deleted: ${result.itemsDeleted}`,
+    ];
+    return lines.join('\n');
+  } else {
+    return `❌ Sync failed\nError: ${result.error || 'Unknown error'}`;
+  }
+}
+
+/**
+ * Handle sync command
+ * 
+ * Invokes the sync Lambda with sync_all operation and reports results.
+ * 
+ * Validates: Requirements 2.1, 2.2, 2.6
+ */
+async function handleSyncCommand(
+  eventId: string,
+  slackContext: SlackContext
+): Promise<void> {
+  log('info', 'Processing sync command', { event_id: eventId });
+
+  await updateExecutionState(idempotencyConfig, eventId, { status: 'EXECUTING' });
+
+  try {
+    // Check if sync Lambda is configured
+    if (!SYNC_LAMBDA_ARN) {
+      await sendSlackReply(
+        { botTokenParam: BOT_TOKEN_PARAM },
+        {
+          channel: slackContext.channel_id,
+          text: formatErrorReply('Sync is not configured'),
+          thread_ts: slackContext.thread_ts,
+        }
+      );
+      await markFailed(idempotencyConfig, eventId, 'Sync Lambda not configured');
+      return;
+    }
+
+    // Invoke sync Lambda with sync_all operation
+    const result = await invokeSyncAll(syncConfig, {
+      operation: 'sync_all',
+      actorId: slackContext.user_id,
+    });
+
+    // Format and send Slack reply
+    const replyText = formatSyncResultForSlack(result);
+    await sendSlackReply(
+      { botTokenParam: BOT_TOKEN_PARAM },
+      {
+        channel: slackContext.channel_id,
+        text: replyText,
+        thread_ts: slackContext.thread_ts,
+      }
+    );
+
+    // Create receipt for sync operation
+    const receipt = createReceipt(
+      eventId,
+      slackContext,
+      'sync' as Classification, // Extended classification for sync
+      1.0,
+      [{ type: 'sync', status: result.success ? 'success' : 'failure', details: { itemsSynced: result.itemsSynced, itemsDeleted: result.itemsDeleted } }],
+      [],
+      null,
+      result.success ? `Sync complete: ${result.itemsSynced} items synced` : `Sync failed: ${result.error}`,
+      { syncResult: result }
+    );
+
+    await appendReceipt(knowledgeConfig, receipt);
+
+    if (result.success) {
+      await markCompleted(idempotencyConfig, eventId);
+      log('info', 'Sync command completed', {
+        event_id: eventId,
+        items_synced: result.itemsSynced,
+        items_deleted: result.itemsDeleted,
+      });
+    } else {
+      await markFailed(idempotencyConfig, eventId, result.error || 'Sync failed');
+      log('warn', 'Sync command failed', {
+        event_id: eventId,
+        error: result.error,
+      });
+    }
+
+  } catch (error) {
+    log('error', 'Sync command error', {
+      event_id: eventId,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+
+    await sendSlackReply(
+      { botTokenParam: BOT_TOKEN_PARAM },
+      {
+        channel: slackContext.channel_id,
+        text: formatErrorReply('Sync failed. Please try again.'),
+        thread_ts: slackContext.thread_ts,
+      }
+    );
+
+    await markFailed(idempotencyConfig, eventId, error instanceof Error ? error.message : 'Sync failed');
+    throw error;
+  }
+}
+
+/**
+ * Format health report for Slack reply
+ * 
+ * Validates: Requirements 5.5, 5.6
+ */
+function formatHealthReportForSlack(healthReport: HealthReport): string {
+  const lines: string[] = ['📊 *Sync Health Report*', ''];
+
+  // Item counts
+  lines.push(`CodeCommit: ${healthReport.codecommitCount} items`);
+  lines.push(`Memory: ${healthReport.memoryCount} items`);
+
+  // Sync status with emoji
+  if (healthReport.inSync) {
+    lines.push('Status: ✅ In sync');
+  } else {
+    lines.push('Status: ⚠️ Out of sync');
+  }
+
+  // Missing items in Memory (up to 10)
+  if (healthReport.missingInMemory.length > 0) {
+    lines.push('');
+    lines.push('Missing in Memory:');
+    const itemsToShow = healthReport.missingInMemory.slice(0, 10);
+    for (const item of itemsToShow) {
+      lines.push(`• ${item}`);
+    }
+    if (healthReport.missingInMemory.length > 10) {
+      lines.push(`• ... and ${healthReport.missingInMemory.length - 10} more`);
+    }
+  }
+
+  // Extra items in Memory (up to 10)
+  if (healthReport.extraInMemory.length > 0) {
+    lines.push('');
+    lines.push('Extra in Memory:');
+    const itemsToShow = healthReport.extraInMemory.slice(0, 10);
+    for (const item of itemsToShow) {
+      lines.push(`• ${item}`);
+    }
+    if (healthReport.extraInMemory.length > 10) {
+      lines.push(`• ... and ${healthReport.extraInMemory.length - 10} more`);
+    }
+  }
+
+  // Last sync info
+  lines.push('');
+  if (healthReport.lastSyncTimestamp) {
+    // Format timestamp for display
+    const syncDate = new Date(healthReport.lastSyncTimestamp);
+    const formattedDate = syncDate.toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
+    lines.push(`Last sync: ${formattedDate}`);
+  } else {
+    lines.push('Last sync: Never');
+  }
+
+  if (healthReport.lastSyncCommitId) {
+    // Show first 7 characters of commit ID
+    lines.push(`Commit: ${healthReport.lastSyncCommitId.substring(0, 7)}`);
+  }
+
+  // Suggestion to fix if out of sync
+  if (!healthReport.inSync) {
+    lines.push('');
+    lines.push('Run `sync` to fix discrepancies.');
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Handle health command
+ * 
+ * Invokes the sync Lambda with health_check operation and reports results.
+ * 
+ * Validates: Requirements 5.1, 5.2, 5.3, 5.4, 5.5, 5.6
+ */
+async function handleHealthCommand(
+  eventId: string,
+  slackContext: SlackContext
+): Promise<void> {
+  log('info', 'Processing health command', { event_id: eventId });
+
+  await updateExecutionState(idempotencyConfig, eventId, { status: 'EXECUTING' });
+
+  try {
+    // Check if sync Lambda is configured
+    if (!SYNC_LAMBDA_ARN) {
+      await sendSlackReply(
+        { botTokenParam: BOT_TOKEN_PARAM },
+        {
+          channel: slackContext.channel_id,
+          text: formatErrorReply('Health check is not configured'),
+          thread_ts: slackContext.thread_ts,
+        }
+      );
+      await markFailed(idempotencyConfig, eventId, 'Sync Lambda not configured');
+      return;
+    }
+
+    // Invoke sync Lambda with health_check operation
+    const result = await invokeHealthCheck(syncConfig, {
+      operation: 'health_check',
+      actorId: slackContext.user_id,
+    });
+
+    // Format and send Slack reply
+    let replyText: string;
+    if (result.success && result.healthReport) {
+      replyText = formatHealthReportForSlack(result.healthReport);
+    } else {
+      replyText = `❌ Health check failed\nError: ${result.error || 'Unknown error'}`;
+    }
+
+    await sendSlackReply(
+      { botTokenParam: BOT_TOKEN_PARAM },
+      {
+        channel: slackContext.channel_id,
+        text: replyText,
+        thread_ts: slackContext.thread_ts,
+      }
+    );
+
+    // Create receipt for health check operation
+    const receipt = createReceipt(
+      eventId,
+      slackContext,
+      'health' as Classification, // Extended classification for health
+      1.0,
+      [{ type: 'health_check', status: result.success ? 'success' : 'failure', details: result.healthReport || { error: result.error } }],
+      [],
+      null,
+      result.success && result.healthReport
+        ? `Health check: ${result.healthReport.inSync ? 'In sync' : 'Out of sync'} (CC: ${result.healthReport.codecommitCount}, Mem: ${result.healthReport.memoryCount})`
+        : `Health check failed: ${result.error}`,
+      { healthReport: result.healthReport }
+    );
+
+    await appendReceipt(knowledgeConfig, receipt);
+
+    if (result.success) {
+      await markCompleted(idempotencyConfig, eventId);
+      log('info', 'Health command completed', {
+        event_id: eventId,
+        in_sync: result.healthReport?.inSync,
+        codecommit_count: result.healthReport?.codecommitCount,
+        memory_count: result.healthReport?.memoryCount,
+      });
+    } else {
+      await markFailed(idempotencyConfig, eventId, result.error || 'Health check failed');
+      log('warn', 'Health command failed', {
+        event_id: eventId,
+        error: result.error,
+      });
+    }
+
+  } catch (error) {
+    log('error', 'Health command error', {
+      event_id: eventId,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+
+    await sendSlackReply(
+      { botTokenParam: BOT_TOKEN_PARAM },
+      {
+        channel: slackContext.channel_id,
+        text: formatErrorReply('Health check failed. Please try again.'),
+        thread_ts: slackContext.thread_ts,
+      }
+    );
+
+    await markFailed(idempotencyConfig, eventId, error instanceof Error ? error.message : 'Health check failed');
+    throw error;
+  }
+}
+
+/**
  * Handle reclassification request
  * 
  * Re-processes the original message with the new classification.
@@ -501,6 +840,26 @@ async function handleReclassification(
         event_id: eventId,
         deleted_file: filePath,
       });
+
+      // Sync delete to Memory (fire-and-forget)
+      // Validates: Requirements 3.1, 3.2
+      if (SYNC_LAMBDA_ARN) {
+        // Extract sb_id from the deleted file path
+        // Pattern: <folder>/<date>__<slug>__<sb_id>.md
+        const sbIdMatch = filePath.match(/sb-[a-f0-9]{7}/);
+        if (sbIdMatch) {
+          const sbId = sbIdMatch[0];
+          await invokeDeleteItem(syncConfig, {
+            operation: 'delete_item',
+            actorId: slackContext.user_id,
+            sbId,
+          });
+          log('info', 'Delete item sync invoked', {
+            event_id: eventId,
+            sb_id: sbId,
+          });
+        }
+      }
     } catch (error) {
       log('warn', 'Failed to delete old file during reclassification', {
         event_id: eventId,
@@ -1357,6 +1716,38 @@ async function executeAndFinalize(
   }
 
   if (result.success) {
+    // Sync item to Memory after successful commit (fire-and-forget)
+    // Validates: Requirements 1.1, 1.5
+    if (SYNC_LAMBDA_ARN && result.filesModified?.length) {
+      const filePath = result.filesModified[0];
+      // Only sync ideas, decisions, and projects (not inbox or tasks)
+      const syncableTypes = ['idea', 'decision', 'project'];
+      if (syncableTypes.includes(actionPlan.classification || '')) {
+        try {
+          // Get the file content for sync
+          const fileContent = await readFile(knowledgeConfig, filePath);
+          if (fileContent) {
+            await invokeSyncItem(syncConfig, {
+              operation: 'sync_item',
+              actorId: slackContext.user_id,
+              itemPath: filePath,
+              itemContent: fileContent,
+            });
+            log('info', 'Sync item invoked', {
+              event_id: eventId,
+              file_path: filePath,
+            });
+          }
+        } catch (error) {
+          // Log but don't fail - sync is fire-and-forget
+          log('warn', 'Failed to invoke sync item', {
+            event_id: eventId,
+            error: error instanceof Error ? error.message : 'Unknown error',
+          });
+        }
+      }
+    }
+
     await markCompleted(idempotencyConfig, eventId, result.commitId, result.receiptCommitId);
     log('info', 'Processing completed', {
       event_id: eventId,
@@ -1684,6 +2075,40 @@ async function processSingleItem(
         item_index: itemIndex,
         error: error instanceof Error ? error.message : 'Unknown error',
       });
+    }
+  }
+
+  // Sync item to Memory after successful commit (fire-and-forget)
+  // Validates: Requirements 1.6
+  if (SYNC_LAMBDA_ARN && result.filesModified?.length) {
+    const filePath = result.filesModified[0];
+    // Only sync ideas, decisions, and projects (not inbox or tasks)
+    const syncableTypes = ['idea', 'decision', 'project'];
+    if (syncableTypes.includes(actionPlan.classification || '')) {
+      try {
+        // Get the file content for sync
+        const fileContent = await readFile(knowledgeConfig, filePath);
+        if (fileContent) {
+          await invokeSyncItem(syncConfig, {
+            operation: 'sync_item',
+            actorId: slackContext.user_id,
+            itemPath: filePath,
+            itemContent: fileContent,
+          });
+          log('info', 'Multi-item sync invoked', {
+            event_id: eventId,
+            item_index: itemIndex,
+            file_path: filePath,
+          });
+        }
+      } catch (error) {
+        // Log but don't fail - sync is fire-and-forget
+        log('warn', 'Failed to invoke multi-item sync', {
+          event_id: eventId,
+          item_index: itemIndex,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        });
+      }
     }
   }
 

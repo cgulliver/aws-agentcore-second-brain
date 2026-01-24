@@ -8,7 +8,7 @@ Validates: Requirements 1.4, 1.5, 5.1, 5.2, 6.1, 6.2, 6.3
 
 import pytest
 from hypothesis import given, strategies as st, settings
-from item_sync import ItemMetadata, SyncResult
+from item_sync import ItemMetadata, SyncResult, HealthReport
 
 
 # Strategies for generating test data
@@ -585,3 +585,659 @@ class TestGracefulDegradation:
         assert isinstance(result.success, bool)
         assert isinstance(result.items_synced, int)
         assert isinstance(result.items_deleted, int)
+
+
+class TestSingleItemSync:
+    """
+    Property 2: Sync triggers after commit
+    
+    For any successful commit of an idea, decision, or project to CodeCommit,
+    the Worker Lambda SHALL invoke the Memory sync client with the correct
+    ItemMetadata extracted from the committed content. For multi-item commits,
+    all successfully committed items SHALL be synced.
+    
+    **Validates: Requirements 1.1, 1.3, 1.6**
+    
+    Feature: memory-repo-sync, Property 2: Sync triggers after commit
+    """
+    
+    @st.composite
+    def valid_item_content_strategy(draw):
+        """Generate random valid item content with front matter."""
+        item_type = draw(st.sampled_from(['idea', 'decision', 'project']))
+        sb_id = draw(st.from_regex(r'^sb-[a-f0-9]{7}$', fullmatch=True))
+        # Use only letters to avoid YAML parsing issues
+        title = draw(st.text(min_size=1, max_size=50, alphabet='abcdefghijklmnopqrstuvwxyz '))
+        # Tags must be simple strings
+        tags = draw(st.lists(st.text(min_size=2, max_size=15, alphabet='abcdefghijklmnopqrstuvwxyz'), max_size=5))
+        status = draw(st.sampled_from(['active', 'on-hold', 'complete', 'cancelled'])) if item_type == 'project' else None
+        
+        # Build YAML front matter
+        yaml_lines = [
+            '---',
+            f'id: {sb_id}',
+            f'title: "{title}"',
+            f'type: {item_type}',
+        ]
+        if tags:
+            yaml_lines.append('tags:')
+            for tag in tags:
+                yaml_lines.append(f'  - "{tag}"')
+        if status:
+            yaml_lines.append(f'status: {status}')
+        yaml_lines.append('---')
+        yaml_lines.append('')
+        yaml_lines.append(f'# {title}')
+        yaml_lines.append('')
+        yaml_lines.append('Content goes here.')
+        
+        content = '\n'.join(yaml_lines)
+        
+        # Generate matching file path
+        folder_map = {'idea': '10-ideas', 'decision': '20-decisions', 'project': '30-projects'}
+        folder = folder_map[item_type]
+        slug = title.lower().replace(' ', '-')[:20]
+        file_path = f"{folder}/2025-01-20__{slug}__{sb_id}.md"
+        
+        return {
+            'content': content,
+            'file_path': file_path,
+            'expected': {
+                'sb_id': sb_id,
+                'title': title,
+                'item_type': item_type,
+                'tags': tags,
+                'status': status,
+            }
+        }
+    
+    @given(valid_item_content_strategy())
+    @settings(max_examples=100)
+    def test_sync_single_item_extracts_metadata_correctly(self, data):
+        """
+        Property: sync_single_item extracts metadata correctly from content.
+        
+        **Validates: Requirements 1.2, 1.3**
+        """
+        from item_sync import ItemSyncModule
+        from unittest.mock import MagicMock
+        
+        sync = ItemSyncModule(memory_id='test-memory', region='us-east-1')
+        
+        # Mock Memory client to capture what gets stored
+        mock_memory = MagicMock()
+        mock_memory.create_event.return_value = {}
+        sync._memory_client = mock_memory
+        
+        content = data['content']
+        file_path = data['file_path']
+        expected = data['expected']
+        
+        # Call sync_single_item
+        result = sync.sync_single_item('test-actor', file_path, content)
+        
+        # Verify success
+        assert result.success is True, f"Sync should succeed, got error: {result.error}"
+        assert result.items_synced == 1, "Should sync exactly 1 item"
+        
+        # Verify Memory was called with correct data
+        mock_memory.create_event.assert_called_once()
+        call_args = mock_memory.create_event.call_args
+        
+        # Verify session_id contains the sb_id
+        assert expected['sb_id'] in call_args.kwargs.get('session_id', ''), \
+            f"Session ID should contain sb_id {expected['sb_id']}"
+        
+        # Verify the message content contains expected metadata
+        messages = call_args.kwargs.get('messages', [])
+        assert len(messages) > 0, "Should have at least one message"
+        message_text = messages[0][0]  # First message, first element is text
+        
+        assert expected['sb_id'] in message_text, f"Message should contain sb_id {expected['sb_id']}"
+        assert expected['item_type'] in message_text, f"Message should contain type {expected['item_type']}"
+    
+    @given(valid_item_content_strategy())
+    @settings(max_examples=100)
+    def test_sync_single_item_stores_all_metadata_fields(self, data):
+        """
+        Property: sync_single_item stores all metadata fields in Memory.
+        
+        **Validates: Requirements 1.2**
+        """
+        from item_sync import ItemSyncModule
+        from unittest.mock import MagicMock
+        
+        sync = ItemSyncModule(memory_id='test-memory', region='us-east-1')
+        
+        # Mock Memory client
+        mock_memory = MagicMock()
+        mock_memory.create_event.return_value = {}
+        sync._memory_client = mock_memory
+        
+        content = data['content']
+        file_path = data['file_path']
+        expected = data['expected']
+        
+        # Call sync_single_item
+        result = sync.sync_single_item('test-actor', file_path, content)
+        
+        assert result.success is True
+        
+        # Get the stored message
+        call_args = mock_memory.create_event.call_args
+        messages = call_args.kwargs.get('messages', [])
+        message_text = messages[0][0]
+        
+        # Verify all required fields are present
+        assert f"ID: {expected['sb_id']}" in message_text, "sb_id should be in stored text"
+        assert f"Type: {expected['item_type']}" in message_text, "item_type should be in stored text"
+        assert f"Path: {file_path}" in message_text, "file_path should be in stored text"
+        
+        # Verify tags if present
+        if expected['tags']:
+            assert "Tags:" in message_text, "Tags should be in stored text when present"
+            for tag in expected['tags']:
+                assert tag in message_text, f"Tag '{tag}' should be in stored text"
+        
+        # Verify status for projects
+        if expected['status']:
+            assert f"Status: {expected['status']}" in message_text, "Status should be in stored text for projects"
+    
+    def test_sync_single_item_fails_for_invalid_content(self):
+        """
+        Unit test: sync_single_item returns failure for invalid content.
+        
+        **Validates: Requirements 1.2**
+        """
+        from item_sync import ItemSyncModule
+        
+        sync = ItemSyncModule(memory_id='test-memory', region='us-east-1')
+        
+        # Test with content missing front matter
+        result = sync.sync_single_item('test-actor', '10-ideas/test.md', '# Just a heading')
+        assert result.success is False
+        assert result.items_synced == 0
+        assert result.error is not None
+        
+        # Test with content missing required fields
+        content = "---\ntitle: Test\n---\n# Test"  # Missing id and type
+        result = sync.sync_single_item('test-actor', '10-ideas/test.md', content)
+        assert result.success is False
+        assert result.items_synced == 0
+    
+    def test_sync_single_item_fails_when_memory_unavailable(self):
+        """
+        Unit test: sync_single_item returns failure when Memory is unavailable.
+        
+        **Validates: Requirements 1.4**
+        """
+        from item_sync import ItemSyncModule
+        
+        sync = ItemSyncModule(memory_id='test-memory', region='us-east-1')
+        
+        # Set memory client to None (unavailable)
+        sync._memory_client = None
+        
+        content = """---
+id: sb-1234567
+title: "Test Item"
+type: idea
+---
+
+# Test Item
+
+Content here.
+"""
+        result = sync.sync_single_item('test-actor', '10-ideas/test.md', content)
+        
+        # Should fail because Memory is unavailable
+        assert result.success is False
+        assert result.items_synced == 0
+    
+    @given(st.lists(valid_item_content_strategy(), min_size=1, max_size=5))
+    @settings(max_examples=50)
+    def test_multiple_items_can_be_synced_sequentially(self, items_data):
+        """
+        Property: Multiple items can be synced sequentially (for multi-item commits).
+        
+        **Validates: Requirements 1.6**
+        """
+        from item_sync import ItemSyncModule
+        from unittest.mock import MagicMock
+        
+        sync = ItemSyncModule(memory_id='test-memory', region='us-east-1')
+        
+        # Mock Memory client
+        mock_memory = MagicMock()
+        mock_memory.create_event.return_value = {}
+        sync._memory_client = mock_memory
+        
+        total_synced = 0
+        for data in items_data:
+            result = sync.sync_single_item('test-actor', data['file_path'], data['content'])
+            if result.success:
+                total_synced += result.items_synced
+        
+        # All items should be synced
+        assert total_synced == len(items_data), f"All {len(items_data)} items should be synced"
+        
+        # Memory should be called once per item
+        assert mock_memory.create_event.call_count == len(items_data), \
+            f"Memory should be called {len(items_data)} times"
+
+
+class TestHealthCheckAccuracy:
+    """
+    Property 6: Health check accuracy
+    
+    For any health check operation, the reported CodeCommit count SHALL equal
+    the actual number of markdown files in the ideas, decisions, and projects
+    folders. The reported Memory count SHALL equal the actual number of items
+    stored in Memory. Discrepancies SHALL be correctly identified and listed
+    (up to 10 items).
+    
+    **Validates: Requirements 5.1, 5.2, 5.3, 5.5**
+    
+    Feature: memory-repo-sync, Property 6: Health check accuracy
+    """
+    
+    @st.composite
+    def item_sets_strategy(draw):
+        """
+        Generate random sets of items for CodeCommit and Memory.
+        
+        Returns a dict with:
+        - codecommit_items: List of ItemMetadata in CodeCommit
+        - memory_items: List of ItemMetadata in Memory
+        - expected_missing: sb_ids in CodeCommit but not Memory
+        - expected_extra: sb_ids in Memory but not CodeCommit
+        """
+        # Generate a pool of unique sb_ids
+        num_total_items = draw(st.integers(min_value=0, max_value=20))
+        sb_ids = [f"sb-{i:07x}" for i in range(num_total_items)]
+        
+        # Randomly assign items to CodeCommit and/or Memory
+        codecommit_sb_ids = set()
+        memory_sb_ids = set()
+        
+        for sb_id in sb_ids:
+            in_codecommit = draw(st.booleans())
+            in_memory = draw(st.booleans())
+            
+            # Ensure at least one location (avoid orphan items)
+            if not in_codecommit and not in_memory:
+                if draw(st.booleans()):
+                    in_codecommit = True
+                else:
+                    in_memory = True
+            
+            if in_codecommit:
+                codecommit_sb_ids.add(sb_id)
+            if in_memory:
+                memory_sb_ids.add(sb_id)
+        
+        # Create ItemMetadata objects
+        def make_item(sb_id, index):
+            item_type = ['idea', 'decision', 'project'][index % 3]
+            folder_map = {'idea': '10-ideas', 'decision': '20-decisions', 'project': '30-projects'}
+            folder = folder_map[item_type]
+            return ItemMetadata(
+                sb_id=sb_id,
+                title=f"Test Item {sb_id}",
+                item_type=item_type,
+                path=f"{folder}/2025-01-20__test-item__{sb_id}.md",
+                tags=['test'],
+                status='active' if item_type == 'project' else None,
+            )
+        
+        codecommit_items = [make_item(sb_id, i) for i, sb_id in enumerate(codecommit_sb_ids)]
+        memory_items = [make_item(sb_id, i) for i, sb_id in enumerate(memory_sb_ids)]
+        
+        # Calculate expected discrepancies
+        expected_missing = list(codecommit_sb_ids - memory_sb_ids)
+        expected_extra = list(memory_sb_ids - codecommit_sb_ids)
+        
+        return {
+            'codecommit_items': codecommit_items,
+            'memory_items': memory_items,
+            'expected_missing': expected_missing,
+            'expected_extra': expected_extra,
+        }
+    
+    @given(item_sets_strategy())
+    @settings(max_examples=100)
+    def test_health_report_counts_match_actual_items(self, data):
+        """
+        Property: Health report counts match actual item counts.
+        
+        **Validates: Requirements 5.1, 5.2**
+        """
+        from item_sync import ItemSyncModule
+        from unittest.mock import MagicMock, patch
+        
+        sync = ItemSyncModule(memory_id='test-memory', region='us-east-1')
+        
+        codecommit_items = data['codecommit_items']
+        memory_items = data['memory_items']
+        
+        # Mock get_all_codecommit_items to return our test items
+        with patch.object(sync, 'get_all_codecommit_items', return_value=codecommit_items):
+            # Mock get_all_memory_items to return our test items
+            with patch.object(sync, 'get_all_memory_items', return_value=memory_items):
+                # Mock sync marker details
+                with patch.object(sync, '_get_sync_marker_details', return_value=('abc1234', '2025-01-20T10:00:00Z')):
+                    report = sync.get_health_report('test-actor')
+        
+        # Verify counts match actual items
+        assert report.codecommit_count == len(codecommit_items), \
+            f"CodeCommit count {report.codecommit_count} should match actual {len(codecommit_items)}"
+        assert report.memory_count == len(memory_items), \
+            f"Memory count {report.memory_count} should match actual {len(memory_items)}"
+    
+    @given(item_sets_strategy())
+    @settings(max_examples=100)
+    def test_health_report_identifies_discrepancies_correctly(self, data):
+        """
+        Property: Health report correctly identifies missing and extra items.
+        
+        **Validates: Requirements 5.3, 5.5**
+        """
+        from item_sync import ItemSyncModule
+        from unittest.mock import patch
+        
+        sync = ItemSyncModule(memory_id='test-memory', region='us-east-1')
+        
+        codecommit_items = data['codecommit_items']
+        memory_items = data['memory_items']
+        expected_missing = set(data['expected_missing'])
+        expected_extra = set(data['expected_extra'])
+        
+        with patch.object(sync, 'get_all_codecommit_items', return_value=codecommit_items):
+            with patch.object(sync, 'get_all_memory_items', return_value=memory_items):
+                with patch.object(sync, '_get_sync_marker_details', return_value=('abc1234', '2025-01-20T10:00:00Z')):
+                    report = sync.get_health_report('test-actor')
+        
+        # Verify missing items are correctly identified (up to 10)
+        reported_missing = set(report.missing_in_memory)
+        assert reported_missing.issubset(expected_missing), \
+            f"Reported missing {reported_missing} should be subset of expected {expected_missing}"
+        
+        # Verify extra items are correctly identified (up to 10)
+        reported_extra = set(report.extra_in_memory)
+        assert reported_extra.issubset(expected_extra), \
+            f"Reported extra {reported_extra} should be subset of expected {expected_extra}"
+        
+        # Verify list limits (max 10 items)
+        assert len(report.missing_in_memory) <= 10, "Missing list should be limited to 10 items"
+        assert len(report.extra_in_memory) <= 10, "Extra list should be limited to 10 items"
+    
+    @given(item_sets_strategy())
+    @settings(max_examples=100)
+    def test_health_report_in_sync_flag_accuracy(self, data):
+        """
+        Property: in_sync flag is True only when counts match and no discrepancies.
+        
+        **Validates: Requirements 5.3**
+        """
+        from item_sync import ItemSyncModule
+        from unittest.mock import patch
+        
+        sync = ItemSyncModule(memory_id='test-memory', region='us-east-1')
+        
+        codecommit_items = data['codecommit_items']
+        memory_items = data['memory_items']
+        expected_missing = data['expected_missing']
+        expected_extra = data['expected_extra']
+        
+        with patch.object(sync, 'get_all_codecommit_items', return_value=codecommit_items):
+            with patch.object(sync, 'get_all_memory_items', return_value=memory_items):
+                with patch.object(sync, '_get_sync_marker_details', return_value=('abc1234', '2025-01-20T10:00:00Z')):
+                    report = sync.get_health_report('test-actor')
+        
+        # in_sync should be True only when there are no discrepancies
+        expected_in_sync = len(expected_missing) == 0 and len(expected_extra) == 0
+        assert report.in_sync == expected_in_sync, \
+            f"in_sync should be {expected_in_sync} when missing={len(expected_missing)}, extra={len(expected_extra)}"
+    
+    def test_health_report_with_empty_codecommit(self):
+        """
+        Unit test: Health report handles empty CodeCommit correctly.
+        
+        **Validates: Requirements 5.1, 5.2**
+        """
+        from item_sync import ItemSyncModule
+        from unittest.mock import patch
+        
+        sync = ItemSyncModule(memory_id='test-memory', region='us-east-1')
+        
+        memory_items = [
+            ItemMetadata(
+                sb_id='sb-0000001',
+                title='Memory Only Item',
+                item_type='idea',
+                path='10-ideas/test.md',
+                tags=[],
+                status=None,
+            )
+        ]
+        
+        with patch.object(sync, 'get_all_codecommit_items', return_value=[]):
+            with patch.object(sync, 'get_all_memory_items', return_value=memory_items):
+                with patch.object(sync, '_get_sync_marker_details', return_value=(None, None)):
+                    report = sync.get_health_report('test-actor')
+        
+        assert report.codecommit_count == 0
+        assert report.memory_count == 1
+        assert report.in_sync is False
+        assert len(report.missing_in_memory) == 0
+        assert 'sb-0000001' in report.extra_in_memory
+    
+    def test_health_report_with_empty_memory(self):
+        """
+        Unit test: Health report handles empty Memory correctly.
+        
+        **Validates: Requirements 5.1, 5.2**
+        """
+        from item_sync import ItemSyncModule
+        from unittest.mock import patch
+        
+        sync = ItemSyncModule(memory_id='test-memory', region='us-east-1')
+        
+        codecommit_items = [
+            ItemMetadata(
+                sb_id='sb-0000001',
+                title='CodeCommit Only Item',
+                item_type='idea',
+                path='10-ideas/test.md',
+                tags=[],
+                status=None,
+            )
+        ]
+        
+        with patch.object(sync, 'get_all_codecommit_items', return_value=codecommit_items):
+            with patch.object(sync, 'get_all_memory_items', return_value=[]):
+                with patch.object(sync, '_get_sync_marker_details', return_value=(None, None)):
+                    report = sync.get_health_report('test-actor')
+        
+        assert report.codecommit_count == 1
+        assert report.memory_count == 0
+        assert report.in_sync is False
+        assert 'sb-0000001' in report.missing_in_memory
+        assert len(report.extra_in_memory) == 0
+    
+    def test_health_report_perfectly_synced(self):
+        """
+        Unit test: Health report shows in_sync when items match.
+        
+        **Validates: Requirements 5.3, 5.6**
+        """
+        from item_sync import ItemSyncModule
+        from unittest.mock import patch
+        
+        sync = ItemSyncModule(memory_id='test-memory', region='us-east-1')
+        
+        items = [
+            ItemMetadata(
+                sb_id='sb-0000001',
+                title='Synced Item 1',
+                item_type='idea',
+                path='10-ideas/test1.md',
+                tags=[],
+                status=None,
+            ),
+            ItemMetadata(
+                sb_id='sb-0000002',
+                title='Synced Item 2',
+                item_type='decision',
+                path='20-decisions/test2.md',
+                tags=[],
+                status=None,
+            ),
+        ]
+        
+        with patch.object(sync, 'get_all_codecommit_items', return_value=items):
+            with patch.object(sync, 'get_all_memory_items', return_value=items):
+                with patch.object(sync, '_get_sync_marker_details', return_value=('abc1234', '2025-01-20T10:00:00Z')):
+                    report = sync.get_health_report('test-actor')
+        
+        assert report.codecommit_count == 2
+        assert report.memory_count == 2
+        assert report.in_sync is True
+        assert len(report.missing_in_memory) == 0
+        assert len(report.extra_in_memory) == 0
+        assert report.last_sync_commit_id == 'abc1234'
+        assert report.last_sync_timestamp == '2025-01-20T10:00:00Z'
+    
+    def test_health_report_limits_discrepancy_list_to_10(self):
+        """
+        Unit test: Health report limits discrepancy lists to 10 items.
+        
+        **Validates: Requirements 5.5**
+        """
+        from item_sync import ItemSyncModule
+        from unittest.mock import patch
+        
+        sync = ItemSyncModule(memory_id='test-memory', region='us-east-1')
+        
+        # Create 15 items only in CodeCommit (missing in Memory)
+        codecommit_items = [
+            ItemMetadata(
+                sb_id=f'sb-{i:07x}',
+                title=f'Item {i}',
+                item_type='idea',
+                path=f'10-ideas/test{i}.md',
+                tags=[],
+                status=None,
+            )
+            for i in range(15)
+        ]
+        
+        with patch.object(sync, 'get_all_codecommit_items', return_value=codecommit_items):
+            with patch.object(sync, 'get_all_memory_items', return_value=[]):
+                with patch.object(sync, '_get_sync_marker_details', return_value=(None, None)):
+                    report = sync.get_health_report('test-actor')
+        
+        assert report.codecommit_count == 15
+        assert report.memory_count == 0
+        assert report.in_sync is False
+        # Should be limited to 10 items
+        assert len(report.missing_in_memory) == 10, \
+            f"Missing list should be limited to 10, got {len(report.missing_in_memory)}"
+
+
+class TestParseMemoryItem:
+    """
+    Unit tests for _parse_memory_item helper method.
+    
+    **Validates: Requirements 5.2**
+    """
+    
+    def test_parses_valid_memory_item(self):
+        """Test parsing a valid memory item format."""
+        from item_sync import ItemSyncModule
+        
+        sync = ItemSyncModule(memory_id='test-memory', region='us-east-1')
+        
+        content = """Item: Test Project
+ID: sb-1234567
+Type: project
+Path: 30-projects/2025-01-20__test-project__sb-1234567.md
+Tags: test, example
+Status: active"""
+        
+        metadata = sync._parse_memory_item(content)
+        
+        assert metadata is not None
+        assert metadata.sb_id == 'sb-1234567'
+        assert metadata.title == 'Test Project'
+        assert metadata.item_type == 'project'
+        assert metadata.path == '30-projects/2025-01-20__test-project__sb-1234567.md'
+        assert metadata.tags == ['test', 'example']
+        assert metadata.status == 'active'
+    
+    def test_parses_item_without_optional_fields(self):
+        """Test parsing item without tags and status."""
+        from item_sync import ItemSyncModule
+        
+        sync = ItemSyncModule(memory_id='test-memory', region='us-east-1')
+        
+        content = """Item: Simple Idea
+ID: sb-abcdef0
+Type: idea
+Path: 10-ideas/2025-01-20__simple-idea__sb-abcdef0.md"""
+        
+        metadata = sync._parse_memory_item(content)
+        
+        assert metadata is not None
+        assert metadata.sb_id == 'sb-abcdef0'
+        assert metadata.title == 'Simple Idea'
+        assert metadata.item_type == 'idea'
+        assert metadata.tags == []
+        assert metadata.status is None
+    
+    def test_skips_sync_marker_content(self):
+        """Test that sync markers are skipped."""
+        from item_sync import ItemSyncModule
+        
+        sync = ItemSyncModule(memory_id='test-memory', region='us-east-1')
+        
+        content = "Last synced commit: abc1234567890"
+        
+        metadata = sync._parse_memory_item(content)
+        
+        assert metadata is None
+    
+    def test_returns_none_for_invalid_sb_id(self):
+        """Test that invalid sb_id format returns None."""
+        from item_sync import ItemSyncModule
+        
+        sync = ItemSyncModule(memory_id='test-memory', region='us-east-1')
+        
+        content = """Item: Invalid Item
+ID: invalid-id
+Type: idea
+Path: 10-ideas/test.md"""
+        
+        metadata = sync._parse_memory_item(content)
+        
+        assert metadata is None
+    
+    def test_returns_none_for_missing_required_fields(self):
+        """Test that missing required fields returns None."""
+        from item_sync import ItemSyncModule
+        
+        sync = ItemSyncModule(memory_id='test-memory', region='us-east-1')
+        
+        # Missing ID
+        content = """Item: Test Item
+Type: idea
+Path: 10-ideas/test.md"""
+        
+        metadata = sync._parse_memory_item(content)
+        
+        assert metadata is None
+
+
+
+# NOTE: Memory-first retrieval tests (Property 8) are in test_memory_first_retrieval.py
+# Those tests properly cover Requirements 4.1, 4.2, 4.3 without the importlib.reload issues

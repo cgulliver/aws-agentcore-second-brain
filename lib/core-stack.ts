@@ -268,7 +268,13 @@ export class CoreStack extends cdk.Stack {
     // Classifier Model Selection
     // Default: Nova Micro (~$0.035/1M input) - 99% cheaper than Claude Sonnet 4
     // Options: amazon.nova-micro-v1:0, amazon.nova-lite-v1:0, anthropic.claude-3-5-haiku-20241022-v1:0
+    // Nova 2: global.amazon.nova-2-lite-v1:0 (supports extended thinking)
     const classifierModel = this.node.tryGetContext('classifierModel') || 'amazon.nova-micro-v1:0';
+    
+    // Nova 2 Extended Thinking (reasoning) configuration
+    // Options: disabled (default), low, medium, high
+    // Only applies to Nova 2 models (nova-2-lite, nova-2-omni)
+    const reasoningEffort = this.node.tryGetContext('reasoningEffort') || 'disabled';
 
     // IAM role for AgentCore execution
     const agentCoreRole = new iam.Role(this, 'AgentCoreRole', {
@@ -386,6 +392,62 @@ export class CoreStack extends cdk.Stack {
       })
     );
 
+    // =========================================================================
+    // Task 11.1: Sync Lambda for Memory-Repo Synchronization
+    // Validates: Requirements 1.1, 2.1, 3.1, 5.1 (Memory-Repo Sync)
+    // =========================================================================
+    
+    // Sync Lambda (Python) - handles sync operations between CodeCommit and Memory
+    const syncLambda = new lambda.Function(this, 'SyncLambda', {
+      functionName: 'second-brain-sync',
+      description: 'Sync items between CodeCommit and AgentCore Memory',
+      runtime: lambda.Runtime.PYTHON_3_12,
+      handler: 'sync_handler.handler',
+      code: lambda.Code.fromAsset('agent'),
+      timeout: cdk.Duration.seconds(60),
+      memorySize: 256,
+      environment: {
+        MEMORY_ID: agentMemory.getAtt('MemoryId').toString(),
+        KNOWLEDGE_REPO_NAME: this.repository.repositoryName,
+        // Note: AWS_REGION is automatically set by Lambda runtime
+      },
+    });
+
+    // Task 11.2: Grant permissions to Sync Lambda
+    // Grant CodeCommit read access for reading items during sync
+    this.repository.grantRead(syncLambda);
+    syncLambda.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: 'CodeCommitReadAccess',
+        effect: iam.Effect.ALLOW,
+        actions: [
+          'codecommit:GetFile',
+          'codecommit:GetFolder',
+          'codecommit:GetBranch',
+          'codecommit:GetDifferences',
+          'codecommit:GetCommit',
+        ],
+        resources: [this.repository.repositoryArn],
+      })
+    );
+
+    // Grant Memory read/write access for sync operations
+    syncLambda.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: 'AgentCoreMemoryAccess',
+        effect: iam.Effect.ALLOW,
+        actions: [
+          'bedrock-agentcore:GetMemory',
+          'bedrock-agentcore:CreateMemoryRecord',
+          'bedrock-agentcore:SearchMemoryRecords',
+          'bedrock-agentcore:DeleteMemoryRecord',
+        ],
+        resources: [
+          `arn:aws:bedrock-agentcore:${this.region}:${this.account}:memory/*`,
+        ],
+      })
+    );
+
     // AgentCore Runtime (CfnRuntime)
     // Note: Using L1 construct as L2 may not be available yet
     // Task 31.2: Pass MEMORY_ID to Runtime via environment variable
@@ -410,6 +472,7 @@ export class CoreStack extends cdk.Stack {
           AWS_DEFAULT_REGION: this.region,
           MEMORY_ID: agentMemory.getAtt('MemoryId').toString(),
           MODEL_ID: classifierModel,
+          REASONING_EFFORT: reasoningEffort,
         },
       },
     });
@@ -549,8 +612,13 @@ export class CoreStack extends cdk.Stack {
         EMAIL_MODE: 'live', // Production mode - emails sent to OmniFocus
         NODE_OPTIONS: '--enable-source-maps',
         DEPLOY_VERSION: '61', // Force env var restore after manual wipe
+        // Task 11.3: Add Sync Lambda ARN for Memory-Repo sync
+        SYNC_LAMBDA_ARN: syncLambda.functionArn,
       },
     });
+
+    // Task 11.3: Grant Worker permission to invoke Sync Lambda
+    syncLambda.grantInvoke(this.workerFunction);
 
     // Add SQS event source from Ingress queue
     this.workerFunction.addEventSource(
@@ -677,6 +745,16 @@ export class CoreStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'ClassifierModelId', {
       value: classifierModel,
       description: 'Bedrock model ID used for classification',
+    });
+
+    new cdk.CfnOutput(this, 'ReasoningEffort', {
+      value: reasoningEffort,
+      description: 'Nova 2 extended thinking effort level (disabled, low, medium, high)',
+    });
+
+    new cdk.CfnOutput(this, 'SyncLambdaArn', {
+      value: syncLambda.functionArn,
+      description: 'Sync Lambda Function ARN for Memory-Repo sync',
     });
   }
 }

@@ -37,10 +37,12 @@ except ImportError:
 
 # Item sync module for Memory-based item lookup
 try:
-    from item_sync import ItemSyncModule
+    from item_sync import ItemSyncModule, ItemMetadata
     ITEM_SYNC_AVAILABLE = True
 except ImportError:
     ITEM_SYNC_AVAILABLE = False
+    # Define ItemMetadata stub for type hints when import fails
+    ItemMetadata = None
 
 app = BedrockAgentCoreApp()
 
@@ -49,9 +51,17 @@ KNOWLEDGE_REPO_NAME = os.getenv('KNOWLEDGE_REPO_NAME', 'second-brain-knowledge')
 AWS_REGION = os.getenv('AWS_DEFAULT_REGION', 'us-east-1')
 MEMORY_ID = os.getenv('MEMORY_ID', '')  # Task 31.2: Memory ID from CDK
 MODEL_ID = os.getenv('MODEL_ID', 'amazon.nova-micro-v1:0')  # Configurable model
+# Nova 2 reasoning config: disabled, low, medium, high
+REASONING_EFFORT = os.getenv('REASONING_EFFORT', 'disabled')
 
 # Bypass tool consent for automated operation (no human in the loop)
 os.environ['BYPASS_TOOL_CONSENT'] = 'true'
+
+
+def is_nova_2_model(model_id: str) -> bool:
+    """Check if the model supports Nova 2 extended thinking."""
+    nova_2_patterns = ['nova-2-lite', 'nova-2-omni', 'nova-2-sonic']
+    return any(pattern in model_id.lower() for pattern in nova_2_patterns)
 
 
 def create_session_manager(user_id: str, session_id: str):
@@ -110,6 +120,215 @@ def create_session_manager(user_id: str, session_id: str):
         return None
 
 
+def search_memory_for_items(user_id: str, message: str) -> list:
+    """
+    Search Memory for items relevant to the user's message.
+    
+    Uses Memory's semantic search to find items that match the user's message.
+    This enables more accurate linking by finding semantically similar items.
+    
+    Args:
+        user_id: Slack user_id mapped to actor_id
+        message: User's message to search for relevant items
+    
+    Returns:
+        List of ItemMetadata objects matching the user's message
+    
+    Validates: Requirements 4.1, 4.2
+    """
+    if not MEMORY_AVAILABLE or not MEMORY_ID:
+        return []
+    
+    try:
+        from bedrock_agentcore.memory import MemoryClient
+        
+        client = MemoryClient(region_name=AWS_REGION)
+        
+        # Search for items using semantic search
+        # The query is the user's message, which will find semantically similar items
+        response = client.retrieve_memories(
+            memory_id=MEMORY_ID,
+            actor_id=user_id,
+            query=message,
+            top_k=50,  # Get up to 50 relevant items
+        )
+        
+        if not response or 'memories' not in response:
+            return []
+        
+        items = []
+        for memory in response.get('memories', []):
+            content = memory.get('content', '')
+            
+            # Skip sync markers and other non-item content
+            if 'Last synced commit:' in content:
+                continue
+            
+            # Parse item metadata from Memory event text format
+            metadata = _parse_memory_item_to_metadata(content)
+            if metadata:
+                items.append(metadata)
+        
+        return items
+        
+    except Exception as e:
+        print(f"Warning: Memory search failed: {e}")
+        return []
+
+
+def _parse_memory_item_to_metadata(content: str):
+    """
+    Parse ItemMetadata from Memory event text format.
+    
+    Args:
+        content: Memory event content in the format produced by ItemMetadata.to_memory_text()
+    
+    Returns:
+        ItemMetadata or None if parsing fails
+    """
+    import re
+    
+    try:
+        # Skip sync markers and other non-item content
+        if 'Last synced commit:' in content:
+            return None
+        
+        # Parse the stored format
+        lines = content.strip().split('\n')
+        
+        title = None
+        sb_id = None
+        item_type = None
+        path = None
+        tags = []
+        status = None
+        
+        for line in lines:
+            if line.startswith('Item: '):
+                title = line[6:].strip()
+            elif line.startswith('ID: '):
+                sb_id = line[4:].strip()
+            elif line.startswith('Type: '):
+                item_type = line[6:].strip()
+            elif line.startswith('Path: '):
+                path = line[6:].strip()
+            elif line.startswith('Tags: '):
+                tags_str = line[6:].strip()
+                tags = [t.strip() for t in tags_str.split(',') if t.strip()]
+            elif line.startswith('Status: '):
+                status = line[8:].strip()
+        
+        # Validate required fields
+        if not all([title, sb_id, item_type, path]):
+            return None
+        
+        # Validate sb_id format
+        if not re.match(r'^sb-[a-f0-9]{7}$', sb_id):
+            return None
+        
+        # Create a simple object with the metadata attributes
+        # We use a simple class to avoid circular import with item_sync
+        class ParsedItemMetadata:
+            def __init__(self, sb_id, title, item_type, path, tags, status):
+                self.sb_id = sb_id
+                self.title = title
+                self.item_type = item_type
+                self.path = path
+                self.tags = tags
+                self.status = status
+        
+        return ParsedItemMetadata(
+            sb_id=sb_id,
+            title=title,
+            item_type=item_type,
+            path=path,
+            tags=tags,
+            status=status,
+        )
+        
+    except Exception as e:
+        print(f"Warning: Failed to parse memory item: {e}")
+        return None
+
+
+def read_items_from_codecommit() -> list:
+    """
+    Read all items directly from CodeCommit.
+    
+    This is the fallback method when Memory is unavailable.
+    
+    Returns:
+        List of ItemMetadata objects from CodeCommit
+    
+    Validates: Requirements 4.3
+    """
+    if not ITEM_SYNC_AVAILABLE:
+        return []
+    
+    try:
+        sync_module = ItemSyncModule(memory_id=MEMORY_ID or '', region=AWS_REGION)
+        head_commit = sync_module.get_codecommit_head()
+        if not head_commit:
+            return []
+        
+        all_files = sync_module._get_all_item_files(head_commit)
+        items = []
+        for file_info in all_files:
+            content = sync_module.get_file_content(file_info['path'], head_commit)
+            if content:
+                metadata = sync_module.extract_item_metadata(file_info['path'], content)
+                if metadata:
+                    items.append(metadata)
+        
+        return items
+        
+    except Exception as e:
+        print(f"Warning: CodeCommit read failed: {e}")
+        return []
+
+
+def get_item_context(user_id: str, message: str) -> list:
+    """
+    Get item context for classification.
+    
+    Primary: Use Memory semantic search
+    Fallback: Read from CodeCommit directly
+    
+    This function implements the Memory-first retrieval strategy with
+    graceful fallback to CodeCommit when Memory is unavailable or fails.
+    
+    Args:
+        user_id: Slack user_id mapped to actor_id
+        message: User's message to find relevant items for
+    
+    Returns:
+        List of relevant items for the LLM context
+    
+    Validates: Requirements 4.1, 4.2, 4.3
+    """
+    try:
+        # Try Memory first
+        if MEMORY_AVAILABLE and MEMORY_ID:
+            items = search_memory_for_items(user_id, message)
+            if items:
+                print(f"Info: Retrieved {len(items)} items from Memory")
+                return items
+            else:
+                print("Info: Memory search returned no items, falling back to CodeCommit")
+    except Exception as e:
+        print(f"Warning: Memory search failed: {e}")
+    
+    # Fallback to CodeCommit
+    try:
+        items = read_items_from_codecommit()
+        if items:
+            print(f"Info: Fallback: Retrieved {len(items)} items from CodeCommit")
+        return items
+    except Exception as e:
+        print(f"Warning: CodeCommit fallback failed: {e}")
+        return []
+
+
 def create_classifier_agent(system_prompt: str, session_manager=None) -> Agent:
     """
     Create a classifier agent with the provided system prompt.
@@ -120,6 +339,9 @@ def create_classifier_agent(system_prompt: str, session_manager=None) -> Agent:
     Note: use_aws tool has been removed. Item context is now provided via
     Memory, which is synced programmatically before classification.
     
+    For Nova 2 models (nova-2-lite, nova-2-omni), extended thinking can be
+    enabled via REASONING_EFFORT env var (disabled, low, medium, high).
+    
     Args:
         system_prompt: The system prompt defining agent behavior
         session_manager: Optional AgentCoreMemorySessionManager for behavioral learning
@@ -127,13 +349,25 @@ def create_classifier_agent(system_prompt: str, session_manager=None) -> Agent:
     Returns:
         Configured Strands Agent
     """
+    # Build model kwargs
+    model_kwargs = {
+        'model_id': MODEL_ID,
+        'region_name': AWS_REGION,
+        'max_tokens': 4096,  # Ensure enough tokens for complete Action Plan JSON
+    }
+    
+    # Add Nova 2 reasoning config if applicable
+    if is_nova_2_model(MODEL_ID) and REASONING_EFFORT != 'disabled':
+        print(f"Info: Nova 2 extended thinking enabled with effort: {REASONING_EFFORT}")
+        model_kwargs['additional_request_fields'] = {
+            'reasoningConfig': {
+                'type': 'enabled',
+                'maxReasoningEffort': REASONING_EFFORT,  # low, medium, high
+            }
+        }
+    
     # Configure Bedrock model with parameterized model ID
-    # Set max_tokens to ensure complete JSON responses
-    model = BedrockModel(
-        model_id=MODEL_ID,
-        region_name=AWS_REGION,
-        max_tokens=4096,  # Ensure enough tokens for complete Action Plan JSON
-    )
+    model = BedrockModel(**model_kwargs)
     
     agent_kwargs = {
         'model': model,
@@ -455,33 +689,23 @@ async def invoke(payload=None):
             - file_operations: array of file operations
             Return only valid JSON."""
         
-        # Fetch item context directly from CodeCommit and inject into prompt
-        # This is more reliable than async Memory retrieval
+        # Fetch item context using Memory-first retrieval with CodeCommit fallback
+        # Validates: Requirements 4.1, 4.2, 4.3
         item_context = ""
         if ITEM_SYNC_AVAILABLE:
             try:
-                sync_module = ItemSyncModule(memory_id=MEMORY_ID or '', region=AWS_REGION)
-                head_commit = sync_module.get_codecommit_head()
-                if head_commit:
-                    all_files = sync_module._get_all_item_files(head_commit)
-                    items = []
-                    for file_info in all_files:
-                        content = sync_module.get_file_content(file_info['path'], head_commit)
-                        if content:
-                            metadata = sync_module.extract_item_metadata(file_info['path'], content)
-                            if metadata:
-                                items.append(metadata)
-                    
-                    if items:
-                        # Build context section for system prompt
-                        context_lines = ["\n\n## Item Context from Knowledge Base\n"]
-                        context_lines.append("Use these items for linking when relevant:\n")
-                        for item in items:
-                            status_str = f" (status: {item.status})" if item.status else ""
-                            tags_str = f" [tags: {', '.join(item.tags)}]" if item.tags else ""
-                            context_lines.append(f"- {item.item_type}: \"{item.title}\" (sb_id: {item.sb_id}){status_str}{tags_str}")
-                        item_context = "\n".join(context_lines)
-                        print(f"Info: Injected {len(items)} items into context")
+                items = get_item_context(user_id, user_message)
+                
+                if items:
+                    # Build context section for system prompt
+                    context_lines = ["\n\n## Item Context from Knowledge Base\n"]
+                    context_lines.append("Use these items for linking when relevant:\n")
+                    for item in items:
+                        status_str = f" (status: {item.status})" if item.status else ""
+                        tags_str = f" [tags: {', '.join(item.tags)}]" if item.tags else ""
+                        context_lines.append(f"- {item.item_type}: \"{item.title}\" (sb_id: {item.sb_id}){status_str}{tags_str}")
+                    item_context = "\n".join(context_lines)
+                    print(f"Info: Injected {len(items)} items into context")
             except Exception as e:
                 # Log but don't fail - context injection is optional
                 print(f"Warning: Item context injection failed: {e}")

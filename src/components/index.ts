@@ -234,3 +234,20 @@ export {
   getTermsForStatus,
   getSupportedPatterns,
 } from './status-intent-detector';
+
+// Sync Invoker
+export {
+  invokeSyncItem,
+  invokeDeleteItem,
+  invokeSyncAll,
+  invokeHealthCheck,
+  clearLambdaClient,
+  setLambdaClient,
+  type SyncItemRequest,
+  type DeleteItemRequest,
+  type SyncAllRequest,
+  type HealthCheckRequest,
+  type SyncResponse,
+  type HealthReport,
+  type SyncInvokerConfig,
+} from './sync-invoker';
