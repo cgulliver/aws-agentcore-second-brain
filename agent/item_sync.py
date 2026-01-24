@@ -275,77 +275,6 @@ class ItemSyncModule:
         )
 
     
-    def get_sync_marker(self, actor_id: str) -> Optional[str]:
-        """
-        Get the last synced commit ID from Memory.
-        
-        Args:
-            actor_id: User/actor ID for scoped storage
-            
-        Returns:
-            Last synced commit ID or None if not found
-            
-        Validates: Requirements 1.1
-        """
-        if not self.memory_client:
-            return None
-        
-        try:
-            # Search for sync marker in Memory
-            response = self.memory_client.retrieve_memories(
-                memory_id=self.memory_id,
-                actor_id=actor_id,
-                namespace=f'/sync/{actor_id}',
-                query='last synced commit',
-                top_k=1,
-            )
-            
-            # Response is a list of memory records
-            if response and len(response) > 0:
-                memory = response[0]
-                content = memory.get('content', '')
-                # Extract commit ID from "Last synced commit: <commit_id>"
-                match = re.search(r'Last synced commit: ([a-f0-9]+)', content)
-                if match:
-                    return match.group(1)
-            
-            return None
-        except Exception as e:
-            print(f"Warning: Failed to get sync marker: {e}")
-            return None
-    
-    def update_sync_marker(self, actor_id: str, commit_id: str) -> bool:
-        """
-        Update the sync marker in Memory.
-        
-        Args:
-            actor_id: User/actor ID for scoped storage
-            commit_id: New commit ID to store
-            
-        Returns:
-            True if successful, False otherwise
-            
-        Validates: Requirements 1.7
-        """
-        if not self.memory_client:
-            return False
-        
-        try:
-            # Store sync marker as an event
-            self.memory_client.create_event(
-                memory_id=self.memory_id,
-                actor_id=actor_id,
-                session_id=f'sync-marker-{actor_id}',
-                messages=[
-                    (f'Last synced commit: {commit_id}', 'ASSISTANT'),
-                ],
-            )
-            return True
-        except Exception as e:
-            print(f"Warning: Failed to update sync marker: {e}")
-            return False
-
-    
     def get_codecommit_head(self) -> Optional[str]:
         """
         Get the current HEAD commit ID from CodeCommit.
@@ -751,50 +680,6 @@ class ItemSyncModule:
             print(f"Warning: Failed to parse memory item: {e}")
             return None
     
-    def _get_sync_marker_details(self, actor_id: str) -> tuple:
-        """
-        Get sync marker details including timestamp.
-        
-        Args:
-            actor_id: User/actor ID
-            
-        Returns:
-            Tuple of (commit_id, timestamp) or (None, None) if not found
-            
-        Validates: Requirements 5.4
-        """
-        if not self.memory_client:
-            return None, None
-        
-        try:
-            response = self.memory_client.retrieve_memories(
-                memory_id=self.memory_id,
-                actor_id=actor_id,
-                namespace=f'/sync/{actor_id}',
-                query='last synced commit',
-                top_k=1,
-            )
-            
-            # Response is a list of memory records
-            if response and len(response) > 0:
-                memory = response[0]
-                content = memory.get('content', '')
-                
-                # Extract commit ID
-                commit_match = re.search(r'Last synced commit: ([a-f0-9]+)', content)
-                commit_id = commit_match.group(1) if commit_match else None
-                
-                # Get timestamp from memory metadata if available
-                timestamp = memory.get('timestamp', memory.get('created_at'))
-                
-                return commit_id, timestamp
-            
-            return None, None
-            
-        except Exception as e:
-            print(f"Warning: Failed to get sync marker details: {e}")
-            return None, None
-    
     def get_health_report(self, actor_id: str) -> HealthReport:
         """
         Compare CodeCommit and Memory item counts.
@@ -830,15 +715,15 @@ class ItemSyncModule:
             # Determine if in sync
             in_sync = len(missing_in_memory) == 0 and len(extra_in_memory) == 0
             
-            # Get sync marker details
-            last_sync_commit_id, last_sync_timestamp = self._get_sync_marker_details(actor_id)
+            # Get current HEAD commit for reference
+            head_commit = self.get_codecommit_head()
             
             return HealthReport(
                 codecommit_count=len(codecommit_items),
                 memory_count=len(memory_items),
                 in_sync=in_sync,
-                last_sync_timestamp=last_sync_timestamp,
-                last_sync_commit_id=last_sync_commit_id,
+                last_sync_timestamp=None,  # No longer tracking sync marker
+                last_sync_commit_id=head_commit,
                 missing_in_memory=missing_in_memory,
                 extra_in_memory=extra_in_memory,
             )
@@ -858,9 +743,10 @@ class ItemSyncModule:
 
     def sync_items(self, actor_id: str) -> SyncResult:
         """
-        Sync items from CodeCommit to Memory for the given actor.
+        Sync all items from CodeCommit to Memory for the given actor.
         
-        This is the main entry point for the sync operation.
+        Always performs a full sync since the item count is small (<100 items)
+        and this ensures Memory stays consistent with CodeCommit.
         
         Args:
             actor_id: User/actor ID for scoped storage
@@ -879,52 +765,24 @@ class ItemSyncModule:
                     error="Failed to get CodeCommit HEAD commit",
                 )
             
-            # Get last synced commit
-            last_sync = self.get_sync_marker(actor_id)
-            
-            # Check if sync is needed (incremental optimization)
-            if last_sync == head_commit:
-                # Already synced, skip
-                return SyncResult(
-                    success=True,
-                    items_synced=0,
-                    items_deleted=0,
-                    new_commit_id=head_commit,
-                )
-            
-            # Get changed files
-            changed_files = self.get_changed_files(last_sync, head_commit)
+            # Always do full sync - item count is small and this ensures consistency
+            all_files = self._get_all_item_files(head_commit)
             
             items_synced = 0
-            items_deleted = 0
             
-            for file_info in changed_files:
+            for file_info in all_files:
                 path = file_info['path']
-                change_type = file_info['change_type']
-                
-                if change_type == 'D':
-                    # File deleted - extract sb_id from path and delete from Memory
-                    # Path format: 10-ideas/2025-01-20__title__sb-xxxxxxx.md
-                    match = re.search(r'sb-[a-f0-9]{7}', path)
-                    if match:
-                        self.delete_item_from_memory(actor_id, match.group(0))
-                        items_deleted += 1
-                else:
-                    # File added or modified - fetch content and store
-                    content = self.get_file_content(path, head_commit)
-                    if content:
-                        metadata = self.extract_item_metadata(path, content)
-                        if metadata:
-                            if self.store_item_in_memory(actor_id, metadata):
-                                items_synced += 1
-            
-            # Update sync marker
-            self.update_sync_marker(actor_id, head_commit)
+                content = self.get_file_content(path, head_commit)
+                if content:
+                    metadata = self.extract_item_metadata(path, content)
+                    if metadata:
+                        if self.store_item_in_memory(actor_id, metadata):
+                            items_synced += 1
             
             return SyncResult(
                 success=True,
                 items_synced=items_synced,
-                items_deleted=items_deleted,
+                items_deleted=0,
                 new_commit_id=head_commit,
             )
             

@@ -897,16 +897,16 @@ def record_fix_preference(user_id: str, original_classification: str, corrected_
 
 def ensure_memory_initialized(actor_id: str) -> bool:
     """
-    Check if Memory has been initialized (has sync marker) and sync if needed.
+    Sync items from CodeCommit to Memory before classification.
     
-    This ensures the first classification request has item context available.
-    If no sync marker exists, performs a full sync before returning.
+    Always performs a full sync since item count is small (<100 items).
+    This ensures Memory has the latest items for semantic search.
     
     Args:
         actor_id: User/actor ID for scoped storage
         
     Returns:
-        True if memory is initialized (or was just initialized), False on error
+        True if sync succeeded, False on error
     """
     if not ITEM_SYNC_AVAILABLE or not MEMORY_ID:
         return False
@@ -914,34 +914,26 @@ def ensure_memory_initialized(actor_id: str) -> bool:
     try:
         sync_module = ItemSyncModule(memory_id=MEMORY_ID, region=AWS_REGION)
         
-        # Check for sync marker
-        sync_marker = sync_module.get_sync_marker(actor_id)
-        
-        if sync_marker:
-            print(f"Info: Memory already initialized (sync marker: {sync_marker[:7]}...)")
-            return True
-        
-        # No sync marker - need to do initial sync
-        print("Info: No sync marker found, performing initial sync...")
+        # Always sync to ensure Memory is up to date
         result = sync_module.sync_items(actor_id)
         
         if result.success:
-            print(f"Info: Initial sync completed ({result.items_synced} items)")
+            print(f"Info: Memory sync completed ({result.items_synced} items)")
             return True
         else:
-            print(f"Warning: Initial sync failed: {result.error}")
+            print(f"Warning: Memory sync failed: {result.error}")
             return False
             
     except Exception as e:
-        print(f"Warning: Failed to check/initialize memory: {e}")
+        print(f"Warning: Failed to sync memory: {e}")
         return False
 
 
 def run_delta_sync(actor_id: str) -> None:
     """
-    Run delta sync after classification completes.
+    Sync items to Memory after classification completes.
     
-    This keeps Memory up-to-date with any changes made since last sync.
+    This keeps Memory up-to-date with any changes made during classification.
     Called after the response is sent to minimize latency impact.
     
     Args:
@@ -952,30 +944,15 @@ def run_delta_sync(actor_id: str) -> None:
     
     try:
         sync_module = ItemSyncModule(memory_id=MEMORY_ID, region=AWS_REGION)
-        
-        # Check if sync is needed (compare marker to HEAD)
-        sync_marker = sync_module.get_sync_marker(actor_id)
-        head_commit = sync_module.get_codecommit_head()
-        
-        if not head_commit:
-            print("Warning: Could not get CodeCommit HEAD for delta sync")
-            return
-        
-        if sync_marker == head_commit:
-            print("Info: Delta sync skipped (already at HEAD)")
-            return
-        
-        # Perform delta sync
-        print(f"Info: Running delta sync ({sync_marker[:7] if sync_marker else 'none'}... -> {head_commit[:7]}...)")
         result = sync_module.sync_items(actor_id)
         
         if result.success:
-            print(f"Info: Delta sync completed ({result.items_synced} synced, {result.items_deleted} deleted)")
+            print(f"Info: Post-classification sync completed ({result.items_synced} items)")
         else:
-            print(f"Warning: Delta sync failed: {result.error}")
+            print(f"Warning: Post-classification sync failed: {result.error}")
             
     except Exception as e:
-        print(f"Warning: Delta sync error: {e}")
+        print(f"Warning: Post-classification sync error: {e}")
 
 
 def handle_sync_operation(payload: dict) -> dict:

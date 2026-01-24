@@ -442,8 +442,8 @@ class TestIncrementalSyncSkip:
     
     @given(st.from_regex(r'^[a-f0-9]{40}$', fullmatch=True))
     @settings(max_examples=100)
-    def test_skips_when_marker_equals_head(self, commit_id):
-        """Property: When marker equals HEAD, no operations are performed."""
+    def test_always_syncs_all_items(self, commit_id):
+        """Property: Sync always processes all items (full sync)."""
         from item_sync import ItemSyncModule
         from unittest.mock import MagicMock
         
@@ -452,67 +452,30 @@ class TestIncrementalSyncSkip:
         # Mock clients
         mock_cc = MagicMock()
         mock_cc.get_branch.return_value = {'branch': {'commitId': commit_id}}
+        mock_cc.get_folder.return_value = {'files': []}  # Empty folders
         sync._codecommit_client = mock_cc
         
         mock_memory = MagicMock()
-        mock_memory.retrieve_memories.return_value = [
-            {'content': f'Last synced commit: {commit_id}'}
-        ]
         sync._memory_client = mock_memory
         
         # Run sync
         result = sync.sync_items('test-actor')
         
-        # Verify success with no operations
+        # Verify success
         assert result.success is True
-        assert result.items_synced == 0
-        assert result.items_deleted == 0
         assert result.new_commit_id == commit_id
         
-        # Verify no file operations were performed
-        mock_cc.get_differences.assert_not_called()
-        mock_cc.get_file.assert_not_called()
-        
-        # Verify no Memory writes were performed (batch API should not be called)
-        mock_memory.gmdp_client.batch_create_memory_records.assert_not_called()
+        # Verify get_folder was called (full sync behavior)
+        assert mock_cc.get_folder.call_count >= 1
     
-    def test_syncs_when_marker_differs(self):
-        """Verify sync happens when marker differs from HEAD."""
+    def test_syncs_all_items_from_folders(self):
+        """Verify sync fetches all items from all folders."""
         from item_sync import ItemSyncModule
         from unittest.mock import MagicMock
         
         sync = ItemSyncModule(memory_id='test-memory', region='us-east-1')
         
-        old_commit = 'a' * 40
         new_commit = 'b' * 40
-        
-        # Mock clients
-        mock_cc = MagicMock()
-        mock_cc.get_branch.return_value = {'branch': {'commitId': new_commit}}
-        mock_cc.get_differences.return_value = {'differences': []}
-        sync._codecommit_client = mock_cc
-        
-        mock_memory = MagicMock()
-        mock_memory.retrieve_memories.return_value = [
-            {'content': f'Last synced commit: {old_commit}'}
-        ]
-        sync._memory_client = mock_memory
-        
-        # Run sync
-        result = sync.sync_items('test-actor')
-        
-        # Verify sync was attempted
-        assert result.success is True
-        mock_cc.get_differences.assert_called_once()
-    
-    def test_initial_sync_when_no_marker(self):
-        """Verify initial sync happens when no marker exists."""
-        from item_sync import ItemSyncModule
-        from unittest.mock import MagicMock
-        
-        sync = ItemSyncModule(memory_id='test-memory', region='us-east-1')
-        
-        new_commit = 'c' * 40
         
         # Mock clients
         mock_cc = MagicMock()
@@ -521,15 +484,54 @@ class TestIncrementalSyncSkip:
         sync._codecommit_client = mock_cc
         
         mock_memory = MagicMock()
-        mock_memory.retrieve_memories.return_value = []  # No marker
         sync._memory_client = mock_memory
         
         # Run sync
         result = sync.sync_items('test-actor')
         
-        # Verify initial sync was attempted (get_folder for all item folders)
+        # Verify sync processed all folders
         assert result.success is True
-        assert mock_cc.get_folder.call_count >= 1  # Called for each item folder
+        # Should call get_folder for each item folder (ideas, decisions, projects)
+        assert mock_cc.get_folder.call_count == 3
+    
+    def test_stores_items_in_memory(self):
+        """Verify sync stores items in Memory via batch API."""
+        from item_sync import ItemSyncModule
+        from unittest.mock import MagicMock
+        
+        sync = ItemSyncModule(memory_id='test-memory', region='us-east-1')
+        
+        new_commit = 'c' * 40
+        
+        # Mock clients - only return file for ideas folder
+        mock_cc = MagicMock()
+        mock_cc.get_branch.return_value = {'branch': {'commitId': new_commit}}
+        
+        def get_folder_side_effect(repositoryName, commitSpecifier, folderPath):
+            if folderPath == '10-ideas':
+                return {'files': [{'absolutePath': '10-ideas/test.md'}]}
+            return {'files': []}
+        
+        mock_cc.get_folder.side_effect = get_folder_side_effect
+        mock_cc.get_file.return_value = {
+            'fileContent': b'---\nid: sb-1234567\ntitle: Test\ntype: idea\n---\n'
+        }
+        sync._codecommit_client = mock_cc
+        
+        mock_memory = MagicMock()
+        mock_memory.gmdp_client.batch_create_memory_records.return_value = {
+            'successfulRecords': [{'memoryRecordId': 'test'}],
+            'failedRecords': []
+        }
+        sync._memory_client = mock_memory
+        
+        # Run sync
+        result = sync.sync_items('test-actor')
+        
+        # Verify item was stored
+        assert result.success is True
+        assert result.items_synced == 1
+        mock_memory.gmdp_client.batch_create_memory_records.assert_called_once()
 
 
 
@@ -981,8 +983,8 @@ class TestHealthCheckAccuracy:
         with patch.object(sync, 'get_all_codecommit_items', return_value=codecommit_items):
             # Mock get_all_memory_items to return our test items
             with patch.object(sync, 'get_all_memory_items', return_value=memory_items):
-                # Mock sync marker details
-                with patch.object(sync, '_get_sync_marker_details', return_value=('abc1234', '2025-01-20T10:00:00Z')):
+                # Mock get_codecommit_head for the commit reference
+                with patch.object(sync, 'get_codecommit_head', return_value='abc1234'):
                     report = sync.get_health_report('test-actor')
         
         # Verify counts match actual items
@@ -1011,7 +1013,7 @@ class TestHealthCheckAccuracy:
         
         with patch.object(sync, 'get_all_codecommit_items', return_value=codecommit_items):
             with patch.object(sync, 'get_all_memory_items', return_value=memory_items):
-                with patch.object(sync, '_get_sync_marker_details', return_value=('abc1234', '2025-01-20T10:00:00Z')):
+                with patch.object(sync, 'get_codecommit_head', return_value='abc1234'):
                     report = sync.get_health_report('test-actor')
         
         # Verify missing items are correctly identified (up to 10)
@@ -1048,7 +1050,7 @@ class TestHealthCheckAccuracy:
         
         with patch.object(sync, 'get_all_codecommit_items', return_value=codecommit_items):
             with patch.object(sync, 'get_all_memory_items', return_value=memory_items):
-                with patch.object(sync, '_get_sync_marker_details', return_value=('abc1234', '2025-01-20T10:00:00Z')):
+                with patch.object(sync, 'get_codecommit_head', return_value='abc1234'):
                     report = sync.get_health_report('test-actor')
         
         # in_sync should be True only when there are no discrepancies
@@ -1080,7 +1082,7 @@ class TestHealthCheckAccuracy:
         
         with patch.object(sync, 'get_all_codecommit_items', return_value=[]):
             with patch.object(sync, 'get_all_memory_items', return_value=memory_items):
-                with patch.object(sync, '_get_sync_marker_details', return_value=(None, None)):
+                with patch.object(sync, 'get_codecommit_head', return_value='abc1234'):
                     report = sync.get_health_report('test-actor')
         
         assert report.codecommit_count == 0
@@ -1113,7 +1115,7 @@ class TestHealthCheckAccuracy:
         
         with patch.object(sync, 'get_all_codecommit_items', return_value=codecommit_items):
             with patch.object(sync, 'get_all_memory_items', return_value=[]):
-                with patch.object(sync, '_get_sync_marker_details', return_value=(None, None)):
+                with patch.object(sync, 'get_codecommit_head', return_value='abc1234'):
                     report = sync.get_health_report('test-actor')
         
         assert report.codecommit_count == 1
@@ -1154,7 +1156,7 @@ class TestHealthCheckAccuracy:
         
         with patch.object(sync, 'get_all_codecommit_items', return_value=items):
             with patch.object(sync, 'get_all_memory_items', return_value=items):
-                with patch.object(sync, '_get_sync_marker_details', return_value=('abc1234', '2025-01-20T10:00:00Z')):
+                with patch.object(sync, 'get_codecommit_head', return_value='abc1234'):
                     report = sync.get_health_report('test-actor')
         
         assert report.codecommit_count == 2
@@ -1163,7 +1165,7 @@ class TestHealthCheckAccuracy:
         assert len(report.missing_in_memory) == 0
         assert len(report.extra_in_memory) == 0
         assert report.last_sync_commit_id == 'abc1234'
-        assert report.last_sync_timestamp == '2025-01-20T10:00:00Z'
+        assert report.last_sync_timestamp is None  # No longer tracking sync timestamp
     
     def test_health_report_limits_discrepancy_list_to_10(self):
         """
@@ -1191,7 +1193,7 @@ class TestHealthCheckAccuracy:
         
         with patch.object(sync, 'get_all_codecommit_items', return_value=codecommit_items):
             with patch.object(sync, 'get_all_memory_items', return_value=[]):
-                with patch.object(sync, '_get_sync_marker_details', return_value=(None, None)):
+                with patch.object(sync, 'get_codecommit_head', return_value='abc1234'):
                     report = sync.get_health_report('test-actor')
         
         assert report.codecommit_count == 15
