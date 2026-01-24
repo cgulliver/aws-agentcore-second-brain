@@ -241,8 +241,6 @@ export {
   invokeDeleteItem,
   invokeSyncAll,
   invokeHealthCheck,
-  clearLambdaClient,
-  setLambdaClient,
   type SyncItemRequest,
   type DeleteItemRequest,
   type SyncAllRequest,

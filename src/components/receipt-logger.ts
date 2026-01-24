@@ -17,8 +17,8 @@ import {
 
 // Receipt action types
 export interface ReceiptAction {
-  type: 'commit' | 'email' | 'slack_reply';
-  status: 'success' | 'failed' | 'skipped';
+  type: 'commit' | 'email' | 'slack_reply' | 'health_check';
+  status: 'success' | 'failed' | 'failure' | 'skipped';
   details: Record<string, unknown>;
 }
 
@@ -80,6 +80,13 @@ export function createReceipt(
     projectSbId?: string;
     previousStatus?: string;
     newStatus?: string;
+    // Query metadata
+    queryStatus?: string;
+    projectsFound?: number;
+    // Health check metadata
+    healthReport?: Record<string, unknown>;
+    // Multi-item metadata
+    multi_item?: Record<string, unknown>;
   }
 ): Receipt {
   return {

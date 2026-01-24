@@ -606,13 +606,14 @@ describe('Property 10: Task Entries No Completion Tracking', () => {
       fc.property(taskLogEntryGen, (entry) => {
         const formatted = formatTaskLogEntry(entry);
         
-        // Should not contain checkbox markers
-        expect(formatted).not.toMatch(/\[x\]/i);
-        expect(formatted).not.toMatch(/\[ \]/);
+        // The format should be "- YYYY-MM-DD: <title>" with no completion state prefix
+        // We check that the format doesn't ADD completion markers, not that the title doesn't contain them
+        const expectedFormat = `- ${entry.date}: ${entry.title}`;
+        expect(formatted).toBe(expectedFormat);
         
-        // Should not contain checkmark symbols
-        expect(formatted).not.toContain('✓');
-        expect(formatted).not.toContain('✔');
+        // The format should not have checkbox prefix before the date
+        expect(formatted).not.toMatch(/^\[[ x]\] -/i);
+        expect(formatted).not.toMatch(/^[✓✔] -/);
         
         // The format is just "- YYYY-MM-DD: title" with no completion state
         expect(formatted).toMatch(/^- \d{4}-\d{2}-\d{2}: /);
@@ -1120,6 +1121,7 @@ const knowledgeFileGen = (status: ProjectStatus) => fc.record({
   title: fc.string({ minLength: 1, maxLength: 50 }).filter(s => s.trim().length > 0 && !s.includes('"') && !s.includes('\n')).map(s => s.trim()),
 }).map(({ id, title }): KnowledgeFile => ({
   path: `30-projects/2025-01-18__${title.toLowerCase().replace(/\s+/g, '-')}__${id}.md`,
+  folder: '30-projects',
   content: `---
 id: ${id}
 type: project

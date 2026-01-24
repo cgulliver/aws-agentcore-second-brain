@@ -15,26 +15,20 @@ export type ReceiptClassification = Classification | 'fix' | 'clarify';
 /**
  * Receipt action types
  */
-export type ReceiptActionType = 'commit' | 'email' | 'slack_reply';
+export type ReceiptActionType = 'commit' | 'email' | 'slack_reply' | 'health_check';
+
+/**
+ * Receipt action status
+ */
+export type ReceiptActionStatus = 'success' | 'failed' | 'failure' | 'skipped';
 
 /**
  * Receipt action with type and details
  */
 export interface ReceiptAction {
   type: ReceiptActionType;
-  details: {
-    // For commit actions
-    repo?: string;
-    branch?: string;
-    message?: string;
-    // For email actions
-    provider?: string;
-    to?: string;
-    subject?: string;
-    // For slack_reply actions
-    channel_id?: string;
-    prompt?: string;
-  };
+  status?: ReceiptActionStatus;
+  details: Record<string, unknown>;
 }
 
 /**

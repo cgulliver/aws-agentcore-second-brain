@@ -19,7 +19,7 @@ import {
 const validActionPlanArb = fc.record({
   intent: fc.constant('capture' as const),
   intent_confidence: fc.double({ min: 0, max: 1, noNaN: true }),
-  classification: fc.constantFrom('inbox', 'idea', 'decision', 'project', 'task' as const),
+  classification: fc.constantFrom('inbox' as const, 'idea' as const, 'decision' as const, 'project' as const, 'task' as const),
   confidence: fc.double({ min: 0, max: 1, noNaN: true }),
   reasoning: fc.string({ minLength: 1, maxLength: 100 }),
   title: fc.string({ minLength: 1, maxLength: 100 }),

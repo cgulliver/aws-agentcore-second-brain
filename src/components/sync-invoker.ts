@@ -61,8 +61,6 @@ export interface SyncInvokerConfig {
   /** AgentCore Runtime ARN (classifier handles sync operations) */
   agentRuntimeArn: string;
   region: string;
-  /** @deprecated Use agentRuntimeArn instead */
-  syncLambdaArn?: string;
 }
 
 // ============================================================================
@@ -355,22 +353,3 @@ export async function invokeHealthCheck(
   }
 }
 
-// ============================================================================
-// Testing Utilities
-// ============================================================================
-
-/**
- * Clear any cached state (for testing)
- * @deprecated No longer needed - AgentCore client doesn't cache
- */
-export function clearLambdaClient(): void {
-  // No-op - kept for backward compatibility
-}
-
-/**
- * Set mock client (for testing)
- * @deprecated Use dependency injection instead
- */
-export function setLambdaClient(_client: unknown): void {
-  // No-op - kept for backward compatibility
-}

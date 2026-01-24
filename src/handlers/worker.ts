@@ -98,6 +98,7 @@ import {
 } from '../components/task-logger';
 import {
   invokeSyncItem,
+  invokeSyncAll,
   invokeDeleteItem,
   invokeHealthCheck,
   type SyncInvokerConfig,
@@ -432,6 +433,24 @@ async function handleFixCommand(
     }
   );
 
+  // Sync to Memory after successful commit
+  // Note: We await this to ensure it completes before Lambda freezes
+  if (AGENT_RUNTIME_ARN && fixResult.filesModified?.length) {
+    try {
+      const syncResult = await invokeSyncAll(syncConfig, {
+        operation: 'sync_all',
+        actorId: slackContext.user_id,
+      });
+      log('info', 'Fix post-commit sync completed', { 
+        event_id: eventId, 
+        items_synced: syncResult.itemsSynced,
+        success: syncResult.success,
+      });
+    } catch (err) {
+      log('warn', 'Fix post-commit sync failed', { event_id: eventId, error: err instanceof Error ? err.message : 'Unknown' });
+    }
+  }
+
   await markCompleted(idempotencyConfig, eventId);
   log('info', 'Fix completed', { event_id: eventId, commit_id: fixResult.commitId });
 }
@@ -565,13 +584,13 @@ async function handleHealthCommand(
       slackContext,
       'health' as Classification, // Extended classification for health
       1.0,
-      [{ type: 'health_check', status: result.success ? 'success' : 'failure', details: result.healthReport || { error: result.error } }],
+      [{ type: 'health_check', status: result.success ? 'success' : 'failure', details: result.healthReport ? { ...result.healthReport } : { error: result.error } }],
       [],
       null,
       result.success && result.healthReport
         ? `Health check: ${result.healthReport.inSync ? 'In sync' : 'Out of sync'} (CC: ${result.healthReport.codecommitCount}, Mem: ${result.healthReport.memoryCount})`
         : `Health check failed: ${result.error}`,
-      { healthReport: result.healthReport }
+      { healthReport: result.healthReport ? { ...result.healthReport } : undefined }
     );
 
     await appendReceipt(knowledgeConfig, receipt);
@@ -965,7 +984,7 @@ async function handleProjectStatusQuery(
       null,
       `Project status query: ${status}`,
       {
-        status,
+        queryStatus: status,
         projectsFound: queryResult.totalCount,
       }
     );
@@ -1336,6 +1355,25 @@ async function handleStatusUpdate(
     );
 
     await appendReceipt(knowledgeConfig, receipt);
+
+    // Sync to Memory after successful commit
+    // Note: We await this to ensure it completes before Lambda freezes
+    if (AGENT_RUNTIME_ARN && updateResult.commitId) {
+      try {
+        const syncResult = await invokeSyncAll(syncConfig, {
+          operation: 'sync_all',
+          actorId: slackContext.user_id,
+        });
+        log('info', 'Status update post-commit sync completed', { 
+          event_id: eventId, 
+          items_synced: syncResult.itemsSynced,
+          success: syncResult.success,
+        });
+      } catch (err) {
+        log('warn', 'Status update post-commit sync failed', { event_id: eventId, error: err instanceof Error ? err.message : 'Unknown' });
+      }
+    }
+
     await markCompleted(idempotencyConfig, eventId, updateResult.commitId);
 
     log('info', 'Status update completed', {
@@ -1574,35 +1612,23 @@ async function executeAndFinalize(
   }
 
   if (result.success) {
-    // Sync item to Memory after successful commit (fire-and-forget)
+    // Sync to Memory after ANY successful commit
+    // This ensures Memory stays consistent with CodeCommit
+    // Note: We await this to ensure it completes before Lambda freezes
     // Validates: Requirements 1.1, 1.5
     if (AGENT_RUNTIME_ARN && result.filesModified?.length) {
-      const filePath = result.filesModified[0];
-      // Only sync ideas, decisions, and projects (not inbox or tasks)
-      const syncableTypes = ['idea', 'decision', 'project'];
-      if (syncableTypes.includes(actionPlan.classification || '')) {
-        try {
-          // Get the file content for sync
-          const fileContent = await readFile(knowledgeConfig, filePath);
-          if (fileContent) {
-            await invokeSyncItem(syncConfig, {
-              operation: 'sync_item',
-              actorId: slackContext.user_id,
-              itemPath: filePath,
-              itemContent: fileContent,
-            });
-            log('info', 'Sync item invoked', {
-              event_id: eventId,
-              file_path: filePath,
-            });
-          }
-        } catch (error) {
-          // Log but don't fail - sync is fire-and-forget
-          log('warn', 'Failed to invoke sync item', {
-            event_id: eventId,
-            error: error instanceof Error ? error.message : 'Unknown error',
-          });
-        }
+      try {
+        const syncResult = await invokeSyncAll(syncConfig, {
+          operation: 'sync_all',
+          actorId: slackContext.user_id,
+        });
+        log('info', 'Post-commit sync completed', { 
+          event_id: eventId, 
+          items_synced: syncResult.itemsSynced,
+          success: syncResult.success,
+        });
+      } catch (err) {
+        log('warn', 'Post-commit sync failed', { event_id: eventId, error: err instanceof Error ? err.message : 'Unknown' });
       }
     }
 
@@ -1936,37 +1962,24 @@ async function processSingleItem(
     }
   }
 
-  // Sync item to Memory after successful commit (fire-and-forget)
-  // Validates: Requirements 1.6
+  // Sync to Memory after ANY successful commit
+  // This ensures Memory stays consistent with CodeCommit
+  // Note: We await this to ensure it completes before Lambda freezes
+  // Validates: Requirements 1.1, 1.5
   if (AGENT_RUNTIME_ARN && result.filesModified?.length) {
-    const filePath = result.filesModified[0];
-    // Only sync ideas, decisions, and projects (not inbox or tasks)
-    const syncableTypes = ['idea', 'decision', 'project'];
-    if (syncableTypes.includes(actionPlan.classification || '')) {
-      try {
-        // Get the file content for sync
-        const fileContent = await readFile(knowledgeConfig, filePath);
-        if (fileContent) {
-          await invokeSyncItem(syncConfig, {
-            operation: 'sync_item',
-            actorId: slackContext.user_id,
-            itemPath: filePath,
-            itemContent: fileContent,
-          });
-          log('info', 'Multi-item sync invoked', {
-            event_id: eventId,
-            item_index: itemIndex,
-            file_path: filePath,
-          });
-        }
-      } catch (error) {
-        // Log but don't fail - sync is fire-and-forget
-        log('warn', 'Failed to invoke multi-item sync', {
-          event_id: eventId,
-          item_index: itemIndex,
-          error: error instanceof Error ? error.message : 'Unknown error',
-        });
-      }
+    try {
+      const syncResult = await invokeSyncAll(syncConfig, {
+        operation: 'sync_all',
+        actorId: slackContext.user_id,
+      });
+      log('info', 'Multi-item post-commit sync completed', { 
+        event_id: eventId, 
+        item_index: itemIndex,
+        items_synced: syncResult.itemsSynced,
+        success: syncResult.success,
+      });
+    } catch (err) {
+      log('warn', 'Multi-item post-commit sync failed', { event_id: eventId, item_index: itemIndex, error: err instanceof Error ? err.message : 'Unknown' });
     }
   }
 

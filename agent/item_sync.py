@@ -568,8 +568,8 @@ class ItemSyncModule:
         """
         Retrieve all items from Memory for an actor.
         
-        Used for health check comparison. Searches Memory for all stored
-        items and parses their metadata from the stored record text.
+        Used for health check comparison. Lists all memory records in the
+        /items/{actor_id} namespace.
         
         Items are stored in /items/{actor_id} namespace using batch_create_memory_records.
         
@@ -588,35 +588,53 @@ class ItemSyncModule:
             return items
         
         try:
-            # Search for all items in the /items/{actor_id} namespace
-            # Items are stored directly via batch_create_memory_records
+            # Use list_memory_records API to get all items in the namespace
+            # This is more reliable than retrieve_memories (semantic search)
             namespace = f'/items/{actor_id}'
             
-            response = self.memory_client.retrieve_memories(
-                memory_id=self.memory_id,
+            print(f"Debug: Calling list_memory_records with memoryId={self.memory_id}, namespace={namespace}")
+            
+            response = self.memory_client.gmdp_client.list_memory_records(
+                memoryId=self.memory_id,
                 namespace=namespace,
-                query='project idea decision item',  # Broad query to match item metadata
-                actor_id=actor_id,
-                top_k=100,  # Get up to 100 items
+                maxResults=100,
             )
             
+            print(f"Debug: list_memory_records response keys: {response.keys() if response else 'None'}")
+            
             if not response:
+                print("Debug: No response from list_memory_records")
                 return items
             
-            # Response is a list of memory records
-            for memory in response:
-                content = memory.get('content', '')
+            summaries = response.get('memoryRecordSummaries', [])
+            print(f"Debug: Found {len(summaries)} memoryRecordSummaries")
+            
+            # Response contains memoryRecordSummaries
+            for i, record in enumerate(summaries):
+                content = record.get('content', {})
+                
+                # Content is returned as {'text': '...'} 
+                if isinstance(content, dict):
+                    content = content.get('text', '')
+                
+                if i == 0:
+                    print(f"Debug: First record content (first 200 chars): {content[:200]}")
                 
                 # Parse item metadata from stored text format
                 # Format: "Item: <title>\nID: <sb_id>\nType: <type>\nPath: <path>\n..."
                 metadata = self._parse_memory_item(content)
                 if metadata:
                     items.append(metadata)
+                elif i < 3:
+                    print(f"Debug: Failed to parse record {i}: {content[:100]}")
             
+            print(f"Debug: Successfully parsed {len(items)} items from Memory")
             return items
             
         except Exception as e:
             print(f"Warning: Failed to get Memory items: {e}")
+            import traceback
+            traceback.print_exc()
             return items
     
     def _parse_memory_item(self, content: str) -> Optional[ItemMetadata]:
@@ -791,3 +809,5 @@ class ItemSyncModule:
                 success=False,
                 error=str(e),
             )
+
+# Force rebuild Sat Jan 24 16:28:09 EST 2026

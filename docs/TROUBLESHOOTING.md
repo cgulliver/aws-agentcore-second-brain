@@ -185,6 +185,15 @@ aws logs filter-log-events \
 - Check if items exist in CodeCommit with proper front matter
 - Verify Memory namespace configuration in CDK stack
 
+**Health check shows 0 items in Memory**
+- Verify the AgentCore role has `ListMemoryRecords` permission
+- Check IAM policy includes:
+  ```
+  bedrock-agentcore:ListMemoryRecords
+  bedrock-agentcore:RetrieveMemoryRecords
+  ```
+- Items may exist but the classifier can't list them without proper permissions
+
 **Items not linking correctly**
 1. Verify items have proper front matter (id, type, title, tags)
 2. Check that items are in the correct folders (10-ideas/, 20-decisions/, 30-projects/)

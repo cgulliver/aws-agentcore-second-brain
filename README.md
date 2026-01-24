@@ -140,7 +140,7 @@ Bot: Captured as decision
 1. **Ingress** - Slack webhook → API Gateway (mTLS) → Lambda (HMAC verify) → SQS
 2. **Idempotency** - Worker acquires lock in DynamoDB, prevents duplicate processing
 3. **Classification** - AgentCore Runtime (configurable model) determines intent and category
-4. **Item Context** - AgentCore Memory provides existing items (projects, ideas, decisions) for linking
+4. **Item Context** - AgentCore Memory (long-term cache) provides existing items for linking, with CodeCommit fallback
 5. **Side Effects** - Execute in order with partial failure recovery:
    - Git commit to CodeCommit (ideas, decisions, projects, inbox)
    - Email via SES (tasks → task manager mail drop)
@@ -166,7 +166,8 @@ Ideas, decisions, and projects include:
 
 - **Smart Classification** - AI-powered categorization with confidence scoring
 - **Memory-Based Item Lookup** - AgentCore Memory provides item context for intelligent linking
-- **Auto-Sync** - Items automatically sync to Memory after each capture
+- **Memory-First Retrieval** - Items retrieved from Memory cache first, with CodeCommit fallback
+- **Async Sync** - Items sync to Memory asynchronously after each classification
 - **Health Check** - Run `health` to verify Memory/CodeCommit consistency
 - **Clarification Flow** - Asks when uncertain, remembers context
 - **Fix Command** - Correct mistakes with `fix: change the title to...` or reclassify with `fix: this should be a task`

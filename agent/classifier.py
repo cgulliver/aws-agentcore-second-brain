@@ -180,6 +180,11 @@ def search_memory_for_items(user_id: str, message: str) -> list:
         for memory in response:
             content = memory.get('content', '')
             
+            # Handle dict content format from retrieve_memories API
+            # Content is returned as {'text': '...'} not a plain string
+            if isinstance(content, dict):
+                content = content.get('text', '')
+            
             # Skip sync markers and other non-item content
             if 'Last synced commit:' in content:
                 continue

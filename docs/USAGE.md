@@ -36,11 +36,12 @@ The system automatically syncs your knowledge items (projects, ideas, decisions)
 
 ### How It Works
 
-1. **Auto-Sync on First Call**: When Memory is empty (no sync marker), the classifier performs a full sync before classification
-2. **Delta Sync After Each Call**: After every classification, the system syncs any new/changed items from CodeCommit to Memory
-3. **Direct Storage**: Items are stored using the `BatchCreateMemoryRecords` API, which preserves structured metadata exactly as formatted (bypasses semantic summarization)
-4. **Semantic Retrieval**: When you mention a project or topic, Memory retrieves relevant items based on semantic similarity
-5. **Automatic Linking**: The classifier uses this context to populate `linked_items` in the Action Plan
+1. **Memory-First Retrieval**: When classifying, the system first checks AgentCore Memory for cached items
+2. **CodeCommit Fallback**: If Memory is empty or unavailable, falls back to reading directly from CodeCommit
+3. **Async Sync After Classification**: After each classification completes, items sync to Memory asynchronously (non-blocking)
+4. **Direct Storage**: Items are stored using the `BatchCreateMemoryRecords` API, which preserves structured metadata exactly as formatted (bypasses semantic summarization)
+5. **Semantic Retrieval**: When you mention a project or topic, Memory retrieves relevant items based on semantic similarity
+6. **Automatic Linking**: The classifier uses this context to populate `linked_items` in the Action Plan
 
 ### What Gets Synced
 
@@ -53,11 +54,11 @@ Each item's metadata (SB_ID, title, type, tags, status) is stored for retrieval.
 
 ### Benefits
 
-- **No manual sync needed**: Memory stays up-to-date automatically
+- **No manual sync needed**: Memory stays up-to-date via async sync after each classification
+- **Fast responses**: Memory-first retrieval avoids CodeCommit latency on cache hits
 - **No tool calls needed**: The LLM doesn't need to search - context is provided automatically
-- **Faster responses**: Eliminates tool call latency
 - **Better matching**: Semantic search finds related items even with different wording
-- **Incremental sync**: Only changed files are processed (efficient)
+- **Graceful degradation**: Falls back to CodeCommit if Memory is empty or unavailable
 
 ## Message Classification
 

@@ -372,6 +372,8 @@ export class CoreStack extends cdk.Stack {
           'bedrock-agentcore:BatchCreateMemoryRecords',
           'bedrock-agentcore:BatchDeleteMemoryRecords',
           'bedrock-agentcore:BatchUpdateMemoryRecords',
+          'bedrock-agentcore:ListMemoryRecords',
+          'bedrock-agentcore:RetrieveMemoryRecords',
         ],
         resources: [
           `arn:aws:bedrock-agentcore:${this.region}:${this.account}:memory/*`,
