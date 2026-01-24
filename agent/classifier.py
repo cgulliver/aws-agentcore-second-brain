@@ -127,6 +127,9 @@ def search_memory_for_items(user_id: str, message: str) -> list:
     Uses Memory's semantic search to find items that match the user's message.
     This enables more accurate linking by finding semantically similar items.
     
+    For project status queries (health, status, "my projects"), we use a broader
+    search to ensure all projects are returned regardless of semantic relevance.
+    
     Args:
         user_id: Slack user_id mapped to actor_id
         message: User's message to search for relevant items
@@ -144,20 +147,35 @@ def search_memory_for_items(user_id: str, message: str) -> list:
         
         client = MemoryClient(region_name=AWS_REGION)
         
-        # Search for items using semantic search
-        # The query is the user's message, which will find semantically similar items
+        # Detect if this is a project status query that needs ALL projects
+        message_lower = message.lower()
+        is_status_query = any(term in message_lower for term in [
+            'status', 'health', 'my projects', 'all projects', 
+            'which project', 'what project', 'on hold', 'on-hold',
+            'active', 'complete', 'cancelled'
+        ])
+        
+        # For status queries, use a broader search term to get all items
+        search_query = "project idea decision status" if is_status_query else message
+        
+        # Search for items in the semantic strategy namespace
+        # The SemanticExtractor stores extracted facts in /patterns/{actorId}
+        namespace = f'/patterns/{user_id}'
+        
         response = client.retrieve_memories(
             memory_id=MEMORY_ID,
+            namespace=namespace,
+            query=search_query,
             actor_id=user_id,
-            query=message,
             top_k=50,  # Get up to 50 relevant items
         )
         
-        if not response or 'memories' not in response:
+        if not response:
             return []
         
         items = []
-        for memory in response.get('memories', []):
+        # Response is a list of memory records
+        for memory in response:
             content = memory.get('content', '')
             
             # Skip sync markers and other non-item content
@@ -291,11 +309,11 @@ def get_item_context(user_id: str, message: str) -> list:
     """
     Get item context for classification.
     
-    Primary: Use Memory semantic search
-    Fallback: Read from CodeCommit directly
+    Primary: Read from CodeCommit directly (most reliable)
     
-    This function implements the Memory-first retrieval strategy with
-    graceful fallback to CodeCommit when Memory is unavailable or fails.
+    Note: Memory semantic extraction summarizes facts rather than preserving
+    structured metadata, so we use CodeCommit as the primary source for
+    accurate item context.
     
     Args:
         user_id: Slack user_id mapped to actor_id
@@ -306,26 +324,16 @@ def get_item_context(user_id: str, message: str) -> list:
     
     Validates: Requirements 4.1, 4.2, 4.3
     """
-    try:
-        # Try Memory first
-        if MEMORY_AVAILABLE and MEMORY_ID:
-            items = search_memory_for_items(user_id, message)
-            if items:
-                print(f"Info: Retrieved {len(items)} items from Memory")
-                return items
-            else:
-                print("Info: Memory search returned no items, falling back to CodeCommit")
-    except Exception as e:
-        print(f"Warning: Memory search failed: {e}")
-    
-    # Fallback to CodeCommit
+    # Use CodeCommit directly for reliable item context
     try:
         items = read_items_from_codecommit()
         if items:
-            print(f"Info: Fallback: Retrieved {len(items)} items from CodeCommit")
+            print(f"Info: Retrieved {len(items)} items from CodeCommit")
+        else:
+            print("Warning: No items found in CodeCommit")
         return items
     except Exception as e:
-        print(f"Warning: CodeCommit fallback failed: {e}")
+        print(f"Warning: CodeCommit read failed: {e}")
         return []
 
 

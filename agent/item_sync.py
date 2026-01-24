@@ -14,7 +14,6 @@ Validates: Requirements 1.1-1.8, 5.1-5.5, 6.1-6.4
 
 import os
 import re
-import yaml
 import boto3
 from dataclasses import dataclass, field
 from typing import List, Optional
@@ -143,6 +142,8 @@ class ItemSyncModule:
         """
         Parse YAML front matter from markdown content.
         
+        Uses simple regex parsing to avoid PyYAML dependency in Lambda.
+        
         Args:
             content: Markdown file content
             
@@ -162,9 +163,66 @@ class ItemSyncModule:
         yaml_block = content[4:4 + end_match.start()]
         
         try:
-            return yaml.safe_load(yaml_block)
-        except yaml.YAMLError:
+            return self._parse_simple_yaml(yaml_block)
+        except Exception:
             return None
+    
+    def _parse_simple_yaml(self, yaml_text: str) -> dict:
+        """
+        Simple YAML parser for front matter.
+        
+        Handles basic key-value pairs and simple arrays.
+        Does not support nested objects or complex YAML features.
+        
+        Args:
+            yaml_text: YAML text to parse
+            
+        Returns:
+            Parsed dict
+        """
+        result = {}
+        current_key = None
+        current_list = None
+        
+        for line in yaml_text.split('\n'):
+            # Skip empty lines
+            if not line.strip():
+                continue
+            
+            # Check for list item (starts with -)
+            if line.startswith('  - '):
+                if current_list is not None:
+                    value = line[4:].strip()
+                    # Remove quotes if present
+                    if value.startswith('"') and value.endswith('"'):
+                        value = value[1:-1]
+                    elif value.startswith("'") and value.endswith("'"):
+                        value = value[1:-1]
+                    current_list.append(value)
+                continue
+            
+            # Check for key-value pair
+            match = re.match(r'^(\w+):\s*(.*)$', line)
+            if match:
+                key = match.group(1)
+                value = match.group(2).strip()
+                
+                # If value is empty, this might be a list
+                if not value:
+                    current_key = key
+                    current_list = []
+                    result[key] = current_list
+                else:
+                    # Remove quotes if present
+                    if value.startswith('"') and value.endswith('"'):
+                        value = value[1:-1]
+                    elif value.startswith("'") and value.endswith("'"):
+                        value = value[1:-1]
+                    result[key] = value
+                    current_key = None
+                    current_list = None
+        
+        return result
     
     def extract_item_metadata(self, file_path: str, content: str) -> Optional[ItemMetadata]:
         """
@@ -413,6 +471,10 @@ class ItemSyncModule:
         """
         Store item metadata in Memory using create_event.
         
+        Items are stored as USER+ASSISTANT conversation pairs to trigger
+        the semantic extraction strategy. The USER message asks about the item,
+        and the ASSISTANT message provides the item metadata.
+        
         Args:
             actor_id: User/actor ID for scoped storage
             item: Item metadata to store
@@ -429,12 +491,17 @@ class ItemSyncModule:
             # Format item as text for semantic storage
             item_text = item.to_memory_text()
             
-            # Store as conversation event in /items namespace
+            # Create a USER+ASSISTANT conversation pair to trigger semantic extraction
+            # The semantic strategy only processes USER and ASSISTANT role messages
+            user_query = f"Store {item.item_type}: {item.title}"
+            
+            # Store as conversation event with both USER and ASSISTANT messages
             self.memory_client.create_event(
                 memory_id=self.memory_id,
                 actor_id=actor_id,
                 session_id=f'item-{item.sb_id}',
                 messages=[
+                    (user_query, 'USER'),
                     (item_text, 'ASSISTANT'),
                 ],
             )
@@ -577,19 +644,23 @@ class ItemSyncModule:
             return items
         
         try:
-            # Search for all items in Memory using a broad query
-            # We search for "Item:" which is the prefix of all stored items
+            # Search for all items in Memory using the semantic strategy namespace
+            # The SemanticExtractor stores extracted facts in /patterns/{actorId}
+            namespace = f'/patterns/{actor_id}'
+            
             response = self.memory_client.retrieve_memories(
                 memory_id=self.memory_id,
+                namespace=namespace,
+                query='project idea decision item',  # Broad query to match item metadata
                 actor_id=actor_id,
-                query='Item Type ID Path',  # Broad query to match item metadata
-                top_k=1000,  # Get as many as possible
+                top_k=100,  # Get up to 100 items
             )
             
-            if not response or 'memories' not in response:
+            if not response:
                 return items
             
-            for memory in response.get('memories', []):
+            # Response is a list of memory records
+            for memory in response:
                 content = memory.get('content', '')
                 
                 # Parse item metadata from stored text format
