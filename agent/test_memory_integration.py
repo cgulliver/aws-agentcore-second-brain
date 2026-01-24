@@ -120,8 +120,12 @@ def test_retrieve_memories():
         
         print(f"✓ Found {len(response)} items:")
         for i, memory in enumerate(response[:3]):
-            content = memory.get('content', '')[:100]
-            print(f"  {i+1}. {content}...")
+            content = memory.get('content', '')
+            # Handle both string and dict content formats
+            if isinstance(content, dict):
+                content = content.get('text', str(content))
+            content_preview = str(content)[:100] if content else '(empty)'
+            print(f"  {i+1}. {content_preview}...")
         
         return True
         
