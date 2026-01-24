@@ -96,9 +96,8 @@ Map to target_status:
 
 **Status update limitations:**
 - Only ONE project can be updated at a time
-- If user says "all projects", "every project", or similar bulk requests, treat as a query and respond:
-  "I can only update one project at a time. Which project would you like to update?"
-- project_reference must identify a specific project from context
+- "all projects", "every project", etc. → respond asking which specific project
+- project_reference must identify a specific, single project
 
 B) query intent signals
 - question words (what/when/how/why/which/who)
