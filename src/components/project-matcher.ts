@@ -218,7 +218,8 @@ export function scoreProjectMatch(project: ProjectMetadata, reference: string): 
   if (titleContainsRef || titleContainsRefNorm) {
     score += 0.7; // Full title weight for substring match
   } else if (hasWordOverlap) {
-    score += Math.min(0.5, (titleSimilarity * 0.7) + 0.2);
+    // Scale based on similarity - high overlap should score high
+    score += Math.min(0.7, (titleSimilarity * 0.7) + 0.15);
   } else {
     score += titleSimilarity * 0.5;
   }
