@@ -311,11 +311,11 @@ def get_item_context(user_id: str, message: str) -> list:
     """
     Get item context for classification.
     
-    Primary: Read from CodeCommit directly (most reliable)
+    Primary: AgentCore Memory (fast, cached)
+    Fallback: CodeCommit direct read (slower, always fresh)
     
-    Note: Memory semantic extraction summarizes facts rather than preserving
-    structured metadata, so we use CodeCommit as the primary source for
-    accurate item context.
+    Memory-first approach reduces latency since items are already synced
+    to Memory via batch_create_memory_records after each commit.
     
     Args:
         user_id: Slack user_id mapped to actor_id
@@ -326,11 +326,23 @@ def get_item_context(user_id: str, message: str) -> list:
     
     Validates: Requirements 4.1, 4.2, 4.3
     """
-    # Use CodeCommit directly for reliable item context
+    # Try Memory first (faster, ~100-200ms)
+    if MEMORY_AVAILABLE and MEMORY_ID:
+        try:
+            items = search_memory_for_items(user_id, message)
+            if items:
+                print(f"Info: Retrieved {len(items)} items from Memory (fast path)")
+                return items
+            else:
+                print("Info: No items in Memory, falling back to CodeCommit")
+        except Exception as e:
+            print(f"Warning: Memory retrieval failed, falling back to CodeCommit: {e}")
+    
+    # Fallback to CodeCommit (slower, ~200-500ms, but always fresh)
     try:
         items = read_items_from_codecommit()
         if items:
-            print(f"Info: Retrieved {len(items)} items from CodeCommit")
+            print(f"Info: Retrieved {len(items)} items from CodeCommit (fallback)")
         else:
             print("Warning: No items found in CodeCommit")
         return items
