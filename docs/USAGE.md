@@ -38,8 +38,9 @@ The system automatically syncs your knowledge items (projects, ideas, decisions)
 
 1. **Auto-Sync on First Call**: When Memory is empty (no sync marker), the classifier performs a full sync before classification
 2. **Delta Sync After Each Call**: After every classification, the system syncs any new/changed items from CodeCommit to Memory
-3. **Semantic Retrieval**: When you mention a project or topic, Memory retrieves relevant items based on semantic similarity
-4. **Automatic Linking**: The classifier uses this context to populate `linked_items` in the Action Plan
+3. **Direct Storage**: Items are stored using the `BatchCreateMemoryRecords` API, which preserves structured metadata exactly as formatted (bypasses semantic summarization)
+4. **Semantic Retrieval**: When you mention a project or topic, Memory retrieves relevant items based on semantic similarity
+5. **Automatic Linking**: The classifier uses this context to populate `linked_items` in the Action Plan
 
 ### What Gets Synced
 

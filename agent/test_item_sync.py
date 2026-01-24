@@ -445,7 +445,7 @@ class TestIncrementalSyncSkip:
     def test_skips_when_marker_equals_head(self, commit_id):
         """Property: When marker equals HEAD, no operations are performed."""
         from item_sync import ItemSyncModule
-        from unittest.mock import MagicMock
+        from unittest.mock import MagicMock, patch
         
         sync = ItemSyncModule(memory_id='test-memory', region='us-east-1')
         
@@ -460,8 +460,12 @@ class TestIncrementalSyncSkip:
         ]
         sync._memory_client = mock_memory
         
-        # Run sync
-        result = sync.sync_items('test-actor')
+        # Mock boto3 client for batch_create_memory_records (should not be called)
+        mock_agentcore_client = MagicMock()
+        
+        with patch('boto3.client', return_value=mock_agentcore_client):
+            # Run sync
+            result = sync.sync_items('test-actor')
         
         # Verify success with no operations
         assert result.success is True
@@ -473,8 +477,8 @@ class TestIncrementalSyncSkip:
         mock_cc.get_differences.assert_not_called()
         mock_cc.get_file.assert_not_called()
         
-        # Verify no Memory writes were performed (except marker check)
-        mock_memory.create_event.assert_not_called()
+        # Verify no Memory writes were performed (batch API should not be called)
+        mock_agentcore_client.batch_create_memory_records.assert_not_called()
     
     def test_syncs_when_marker_differs(self):
         """Verify sync happens when marker differs from HEAD."""
@@ -702,44 +706,49 @@ class TestSingleItemSync:
         **Validates: Requirements 1.2, 1.3**
         """
         from item_sync import ItemSyncModule
-        from unittest.mock import MagicMock
+        from unittest.mock import MagicMock, patch
         
         sync = ItemSyncModule(memory_id='test-memory', region='us-east-1')
         
-        # Mock Memory client to capture what gets stored
-        mock_memory = MagicMock()
-        mock_memory.create_event.return_value = {}
-        sync._memory_client = mock_memory
+        # Mock boto3 client for batch_create_memory_records
+        mock_agentcore_client = MagicMock()
+        mock_agentcore_client.batch_create_memory_records.return_value = {
+            'successfulRecords': [{'memoryRecordId': 'test-record-id', 'status': 'SUCCEEDED'}],
+            'failedRecords': []
+        }
         
         content = data['content']
         file_path = data['file_path']
         expected = data['expected']
         
-        # Call sync_single_item
-        result = sync.sync_single_item('test-actor', file_path, content)
+        # Patch boto3.client to return our mock
+        with patch('boto3.client', return_value=mock_agentcore_client):
+            # Call sync_single_item
+            result = sync.sync_single_item('test-actor', file_path, content)
         
         # Verify success
         assert result.success is True, f"Sync should succeed, got error: {result.error}"
         assert result.items_synced == 1, "Should sync exactly 1 item"
         
-        # Verify Memory was called with correct data
-        mock_memory.create_event.assert_called_once()
-        call_args = mock_memory.create_event.call_args
+        # Verify batch_create_memory_records was called with correct data
+        mock_agentcore_client.batch_create_memory_records.assert_called_once()
+        call_args = mock_agentcore_client.batch_create_memory_records.call_args
         
-        # Verify session_id contains the sb_id
-        assert expected['sb_id'] in call_args.kwargs.get('session_id', ''), \
-            f"Session ID should contain sb_id {expected['sb_id']}"
+        # Verify memoryId
+        assert call_args.kwargs.get('memoryId') == 'test-memory', "Should use correct memory ID"
         
-        # Verify the message content contains expected metadata
-        # Messages are now [USER, ASSISTANT] pairs to trigger semantic extraction
-        messages = call_args.kwargs.get('messages', [])
-        assert len(messages) == 2, "Should have USER and ASSISTANT messages"
+        # Verify records contain the item
+        records = call_args.kwargs.get('records', [])
+        assert len(records) == 1, "Should have exactly 1 record"
         
-        # The ASSISTANT message (second) contains the item metadata
-        assistant_message = messages[1][0]
+        record = records[0]
+        assert record['requestIdentifier'] == expected['sb_id'], f"requestIdentifier should be sb_id {expected['sb_id']}"
+        assert '/items/test-actor' in record['namespaces'], "Should use /items/{actor_id} namespace"
         
-        assert expected['sb_id'] in assistant_message, f"ASSISTANT message should contain sb_id {expected['sb_id']}"
-        assert expected['item_type'] in assistant_message, f"ASSISTANT message should contain type {expected['item_type']}"
+        # Verify content contains expected metadata
+        content_text = record['content']['text']
+        assert expected['sb_id'] in content_text, f"Content should contain sb_id {expected['sb_id']}"
+        assert expected['item_type'] in content_text, f"Content should contain type {expected['item_type']}"
     
     @given(valid_item_content_strategy())
     @settings(max_examples=100)
@@ -750,29 +759,34 @@ class TestSingleItemSync:
         **Validates: Requirements 1.2**
         """
         from item_sync import ItemSyncModule
-        from unittest.mock import MagicMock
+        from unittest.mock import MagicMock, patch
         
         sync = ItemSyncModule(memory_id='test-memory', region='us-east-1')
         
-        # Mock Memory client
-        mock_memory = MagicMock()
-        mock_memory.create_event.return_value = {}
-        sync._memory_client = mock_memory
+        # Mock boto3 client for batch_create_memory_records
+        mock_agentcore_client = MagicMock()
+        mock_agentcore_client.batch_create_memory_records.return_value = {
+            'successfulRecords': [{'memoryRecordId': 'test-record-id', 'status': 'SUCCEEDED'}],
+            'failedRecords': []
+        }
         
         content = data['content']
         file_path = data['file_path']
         expected = data['expected']
         
-        # Call sync_single_item
-        result = sync.sync_single_item('test-actor', file_path, content)
+        # Patch boto3.client to return our mock
+        with patch('boto3.client', return_value=mock_agentcore_client):
+            # Call sync_single_item
+            result = sync.sync_single_item('test-actor', file_path, content)
         
         assert result.success is True
         
-        # Get the stored message - ASSISTANT message is second in the pair
-        call_args = mock_memory.create_event.call_args
-        messages = call_args.kwargs.get('messages', [])
-        assert len(messages) == 2, "Should have USER and ASSISTANT messages"
-        message_text = messages[1][0]  # ASSISTANT message contains item metadata
+        # Get the stored content from batch_create_memory_records call
+        call_args = mock_agentcore_client.batch_create_memory_records.call_args
+        records = call_args.kwargs.get('records', [])
+        assert len(records) == 1, "Should have exactly 1 record"
+        
+        message_text = records[0]['content']['text']
         
         # Verify all required fields are present
         assert f"ID: {expected['sb_id']}" in message_text, "sb_id should be in stored text"
@@ -813,16 +827,18 @@ class TestSingleItemSync:
     
     def test_sync_single_item_fails_when_memory_unavailable(self):
         """
-        Unit test: sync_single_item returns failure when Memory is unavailable.
+        Unit test: sync_single_item returns failure when Memory API fails.
         
         **Validates: Requirements 1.4**
         """
         from item_sync import ItemSyncModule
+        from unittest.mock import MagicMock, patch
         
         sync = ItemSyncModule(memory_id='test-memory', region='us-east-1')
         
-        # Set memory client to None (unavailable)
-        sync._memory_client = None
+        # Mock boto3 client to raise an exception
+        mock_agentcore_client = MagicMock()
+        mock_agentcore_client.batch_create_memory_records.side_effect = Exception("Memory unavailable")
         
         content = """---
 id: sb-1234567
@@ -834,9 +850,10 @@ type: idea
 
 Content here.
 """
-        result = sync.sync_single_item('test-actor', '10-ideas/test.md', content)
+        with patch('boto3.client', return_value=mock_agentcore_client):
+            result = sync.sync_single_item('test-actor', '10-ideas/test.md', content)
         
-        # Should fail because Memory is unavailable
+        # Should fail because Memory API failed
         assert result.success is False
         assert result.items_synced == 0
     
@@ -849,27 +866,30 @@ Content here.
         **Validates: Requirements 1.6**
         """
         from item_sync import ItemSyncModule
-        from unittest.mock import MagicMock
+        from unittest.mock import MagicMock, patch
         
         sync = ItemSyncModule(memory_id='test-memory', region='us-east-1')
         
-        # Mock Memory client
-        mock_memory = MagicMock()
-        mock_memory.create_event.return_value = {}
-        sync._memory_client = mock_memory
+        # Mock boto3 client for batch_create_memory_records
+        mock_agentcore_client = MagicMock()
+        mock_agentcore_client.batch_create_memory_records.return_value = {
+            'successfulRecords': [{'memoryRecordId': 'test-record-id', 'status': 'SUCCEEDED'}],
+            'failedRecords': []
+        }
         
         total_synced = 0
-        for data in items_data:
-            result = sync.sync_single_item('test-actor', data['file_path'], data['content'])
-            if result.success:
-                total_synced += result.items_synced
+        with patch('boto3.client', return_value=mock_agentcore_client):
+            for data in items_data:
+                result = sync.sync_single_item('test-actor', data['file_path'], data['content'])
+                if result.success:
+                    total_synced += result.items_synced
         
         # All items should be synced
         assert total_synced == len(items_data), f"All {len(items_data)} items should be synced"
         
-        # Memory should be called once per item
-        assert mock_memory.create_event.call_count == len(items_data), \
-            f"Memory should be called {len(items_data)} times"
+        # batch_create_memory_records should be called once per item
+        assert mock_agentcore_client.batch_create_memory_records.call_count == len(items_data), \
+            f"batch_create_memory_records should be called {len(items_data)} times"
 
 
 class TestHealthCheckAccuracy:

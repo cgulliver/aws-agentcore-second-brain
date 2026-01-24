@@ -474,11 +474,13 @@ class ItemSyncModule:
     
     def store_item_in_memory(self, actor_id: str, item: ItemMetadata) -> bool:
         """
-        Store item metadata in Memory using create_event.
+        Store item metadata in Memory using BatchCreateMemoryRecords API.
         
-        Items are stored as USER+ASSISTANT conversation pairs to trigger
-        the semantic extraction strategy. The USER message asks about the item,
-        and the ASSISTANT message provides the item metadata.
+        Uses the batch API to store items directly without strategy processing.
+        This preserves the structured metadata exactly as formatted, avoiding
+        the SemanticExtractor's summarization behavior.
+        
+        Items are stored in the /items/{actor_id} namespace for direct retrieval.
         
         Args:
             actor_id: User/actor ID for scoped storage
@@ -489,27 +491,30 @@ class ItemSyncModule:
             
         Validates: Requirements 1.6, 5.4
         """
-        if not self.memory_client:
-            return False
-        
         try:
-            # Format item as text for semantic storage
+            # Use boto3 directly for batch_create_memory_records
+            # (MemoryClient doesn't expose this method)
+            client = boto3.client('bedrock-agentcore', region_name=self.region)
+            
+            # Format item as text for storage
             item_text = item.to_memory_text()
             
-            # Create a USER+ASSISTANT conversation pair to trigger semantic extraction
-            # The semantic strategy only processes USER and ASSISTANT role messages
-            user_query = f"Store {item.item_type}: {item.title}"
-            
-            # Store as conversation event with both USER and ASSISTANT messages
-            self.memory_client.create_event(
-                memory_id=self.memory_id,
-                actor_id=actor_id,
-                session_id=f'item-{item.sb_id}',
-                messages=[
-                    (user_query, 'USER'),
-                    (item_text, 'ASSISTANT'),
-                ],
+            # Store directly using batch API - bypasses strategy processing
+            response = client.batch_create_memory_records(
+                memoryId=self.memory_id,
+                records=[{
+                    'requestIdentifier': item.sb_id,
+                    'namespaces': [f'/items/{actor_id}'],
+                    'content': {'text': item_text},
+                }]
             )
+            
+            # Check for failures
+            failed = response.get('failedRecords', [])
+            if failed:
+                print(f"Warning: Failed to store item {item.sb_id}: {failed[0].get('errorMessage', 'Unknown error')}")
+                return False
+            
             return True
         except Exception as e:
             print(f"Warning: Failed to store item {item.sb_id}: {e}")
@@ -632,7 +637,9 @@ class ItemSyncModule:
         Retrieve all items from Memory for an actor.
         
         Used for health check comparison. Searches Memory for all stored
-        items and parses their metadata from the stored event text.
+        items and parses their metadata from the stored record text.
+        
+        Items are stored in /items/{actor_id} namespace using BatchCreateMemoryRecords.
         
         Args:
             actor_id: User/actor ID for scoped storage
@@ -649,9 +656,9 @@ class ItemSyncModule:
             return items
         
         try:
-            # Search for all items in Memory using the semantic strategy namespace
-            # The SemanticExtractor stores extracted facts in /patterns/{actorId}
-            namespace = f'/patterns/{actor_id}'
+            # Search for all items in the /items/{actor_id} namespace
+            # Items are stored directly via BatchCreateMemoryRecords
+            namespace = f'/items/{actor_id}'
             
             response = self.memory_client.retrieve_memories(
                 memory_id=self.memory_id,

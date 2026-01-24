@@ -359,6 +359,7 @@ export class CoreStack extends cdk.Stack {
     });
 
     // Grant AgentCore role permissions for Memory operations (Task 31.4)
+    // Including batch operations for direct item storage (bypasses strategy processing)
     agentCoreRole.addToPolicy(
       new iam.PolicyStatement({
         sid: 'AgentCoreMemory',
@@ -368,6 +369,9 @@ export class CoreStack extends cdk.Stack {
           'bedrock-agentcore:CreateMemoryRecord',
           'bedrock-agentcore:SearchMemoryRecords',
           'bedrock-agentcore:DeleteMemoryRecord',
+          'bedrock-agentcore:BatchCreateMemoryRecords',
+          'bedrock-agentcore:BatchDeleteMemoryRecords',
+          'bedrock-agentcore:BatchUpdateMemoryRecords',
         ],
         resources: [
           `arn:aws:bedrock-agentcore:${this.region}:${this.account}:memory/*`,
@@ -434,6 +438,7 @@ export class CoreStack extends cdk.Stack {
     );
 
     // Grant Memory read/write access for sync operations
+    // Including batch operations for direct item storage (bypasses strategy processing)
     syncLambda.addToRolePolicy(
       new iam.PolicyStatement({
         sid: 'AgentCoreMemoryAccess',
@@ -443,6 +448,9 @@ export class CoreStack extends cdk.Stack {
           'bedrock-agentcore:CreateMemoryRecord',
           'bedrock-agentcore:SearchMemoryRecords',
           'bedrock-agentcore:DeleteMemoryRecord',
+          'bedrock-agentcore:BatchCreateMemoryRecords',
+          'bedrock-agentcore:BatchDeleteMemoryRecords',
+          'bedrock-agentcore:BatchUpdateMemoryRecords',
         ],
         resources: [
           `arn:aws:bedrock-agentcore:${this.region}:${this.account}:memory/*`,
@@ -454,11 +462,12 @@ export class CoreStack extends cdk.Stack {
     // Note: Using L1 construct as L2 may not be available yet
     // Task 31.2: Pass MEMORY_ID to Runtime via environment variable
     // Include source hash in description to force Runtime update on code changes
+    const buildTimestamp = new Date().toISOString().substring(0, 16);
     const agentRuntime = new cdk.CfnResource(this, 'ClassifierRuntime', {
       type: 'AWS::BedrockAgentCore::Runtime',
       properties: {
         AgentRuntimeName: 'second_brain_classifier',
-        Description: `Second Brain classifier agent (build: ${agentSourceAsset.assetHash.substring(0, 8)})`,
+        Description: `Second Brain classifier agent (build: ${agentSourceAsset.assetHash.substring(0, 8)}, ts: ${buildTimestamp})`,
         AgentRuntimeArtifact: {
           ContainerConfiguration: {
             ContainerUri: `${this.ecrRepository.repositoryUri}:latest`,

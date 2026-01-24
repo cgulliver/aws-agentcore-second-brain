@@ -127,6 +127,8 @@ def search_memory_for_items(user_id: str, message: str) -> list:
     Uses Memory's semantic search to find items that match the user's message.
     This enables more accurate linking by finding semantically similar items.
     
+    Items are stored in /items/{actor_id} namespace using BatchCreateMemoryRecords.
+    
     For project status queries (health, status, "my projects"), we use a broader
     search to ensure all projects are returned regardless of semantic relevance.
     
@@ -158,9 +160,9 @@ def search_memory_for_items(user_id: str, message: str) -> list:
         # For status queries, use a broader search term to get all items
         search_query = "project idea decision status" if is_status_query else message
         
-        # Search for items in the semantic strategy namespace
-        # The SemanticExtractor stores extracted facts in /patterns/{actorId}
-        namespace = f'/patterns/{user_id}'
+        # Search for items in the /items/{actor_id} namespace
+        # Items are stored directly via BatchCreateMemoryRecords (not via strategies)
+        namespace = f'/items/{user_id}'
         
         response = client.retrieve_memories(
             memory_id=MEMORY_ID,
@@ -182,7 +184,7 @@ def search_memory_for_items(user_id: str, message: str) -> list:
             if 'Last synced commit:' in content:
                 continue
             
-            # Parse item metadata from Memory event text format
+            # Parse item metadata from Memory record text format
             metadata = _parse_memory_item_to_metadata(content)
             if metadata:
                 items.append(metadata)
