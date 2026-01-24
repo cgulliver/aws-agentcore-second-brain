@@ -154,15 +154,20 @@ def search_memory_for_items(user_id: str, message: str) -> list:
         is_status_query = any(term in message_lower for term in [
             'status', 'health', 'my projects', 'all projects', 
             'which project', 'what project', 'on hold', 'on-hold',
-            'active', 'complete', 'cancelled'
+            'active', 'complete', 'cancelled', 'priorities', 'priority',
+            'report', 'overview', 'summary'
         ])
         
         # For status queries, use a broader search term to get all items
         search_query = "project idea decision status" if is_status_query else message
         
+        print(f"Debug: search_memory_for_items - is_status_query={is_status_query}, search_query={search_query[:50]}")
+        
         # Search for items in the /items/{actor_id} namespace
         # Items are stored directly via batch_create_memory_records (not via strategies)
         namespace = f'/items/{user_id}'
+        
+        print(f"Debug: Calling retrieve_memories with memory_id={MEMORY_ID}, namespace={namespace}")
         
         response = client.retrieve_memories(
             memory_id=MEMORY_ID,
@@ -171,6 +176,8 @@ def search_memory_for_items(user_id: str, message: str) -> list:
             actor_id=user_id,
             top_k=50,  # Get up to 50 relevant items
         )
+        
+        print(f"Debug: retrieve_memories returned {len(response) if response else 0} items")
         
         if not response:
             return []
