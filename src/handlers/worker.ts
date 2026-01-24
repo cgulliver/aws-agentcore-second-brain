@@ -802,6 +802,39 @@ async function handleQueryIntent(
   await updateExecutionState(idempotencyConfig, eventId, { status: 'EXECUTING' });
 
   try {
+    // If the classifier already provided a query_response (e.g., for help requests),
+    // use it directly without searching the knowledge base
+    if (actionPlan.query_response && actionPlan.cited_files?.length === 0) {
+      log('info', 'Using classifier-provided query response (no search needed)', {
+        event_id: eventId,
+      });
+      
+      await sendSlackReply(
+        { botTokenParam: BOT_TOKEN_PARAM },
+        {
+          channel: slackContext.channel_id,
+          thread_ts: slackContext.thread_ts,
+          text: actionPlan.query_response,
+        }
+      );
+
+      const receipt = createReceipt(
+        eventId,
+        slackContext,
+        'query' as Classification,
+        actionPlan.intent_confidence,
+        [], // actions
+        [], // files
+        null, // commitId
+        'Help response', // summary
+        { promptSha256: systemPrompt.metadata.sha256 }
+      );
+
+      await appendReceipt(knowledgeConfig, receipt);
+      await markCompleted(idempotencyConfig, eventId);
+      return;
+    }
+
     // Check if this is a project status query
     const statusQueryMatch = detectProjectStatusQuery(queryText);
     
