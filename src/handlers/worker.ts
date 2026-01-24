@@ -490,20 +490,11 @@ function formatHealthReportForSlack(healthReport: HealthReport): string {
     }
   }
 
-  // Last sync info
+  // Current commit info
   lines.push('');
-  if (healthReport.lastSyncTimestamp) {
-    // Format timestamp for display
-    const syncDate = new Date(healthReport.lastSyncTimestamp);
-    const formattedDate = syncDate.toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
-    lines.push(`Last sync: ${formattedDate}`);
-  } else {
-    lines.push('Last sync: Never');
-  }
-
   if (healthReport.lastSyncCommitId) {
     // Show first 7 characters of commit ID
-    lines.push(`Commit: ${healthReport.lastSyncCommitId.substring(0, 7)}`);
+    lines.push(`HEAD: ${healthReport.lastSyncCommitId.substring(0, 7)}`);
   }
 
   // Suggestion to fix if out of sync
