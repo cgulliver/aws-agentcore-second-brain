@@ -553,8 +553,12 @@ export class CoreStack extends cdk.Stack {
     // =========================================================================
     
     // Note: SES email identity is managed outside CDK (verified manually)
-    // The sender email should be configured via context or environment
-    const senderEmail = this.node.tryGetContext('senderEmail') || 'noreply@example.com';
+    // The sender email is stored in SSM Parameter Store
+    const senderEmailParam = ssm.StringParameter.fromStringParameterName(
+      this,
+      'SenderEmailParam',
+      '/second-brain/ses-from-email'
+    );
 
     // =========================================================================
     // Task 3.12: SSM Parameter for Conversation Context TTL
@@ -619,7 +623,7 @@ export class CoreStack extends cdk.Stack {
         BOT_TOKEN_PARAM: botTokenParam.parameterName,
         MAILDROP_PARAM: mailDropParam.parameterName,
         CONVERSATION_TTL_PARAM: conversationTtlParam.parameterName,
-        SES_FROM_EMAIL: senderEmail,
+        SES_FROM_EMAIL: senderEmailParam.stringValue,
         EMAIL_MODE: 'live', // Production mode - emails sent to OmniFocus
         NODE_OPTIONS: '--enable-source-maps',
         DEPLOY_VERSION: '69', // Fix retrieve_memories API response format
