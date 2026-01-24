@@ -127,7 +127,7 @@ def search_memory_for_items(user_id: str, message: str) -> list:
     Uses Memory's semantic search to find items that match the user's message.
     This enables more accurate linking by finding semantically similar items.
     
-    Items are stored in /items/{actor_id} namespace using BatchCreateMemoryRecords.
+    Items are stored in /items/{actor_id} namespace using batch_create_memory_records.
     
     For project status queries (health, status, "my projects"), we use a broader
     search to ensure all projects are returned regardless of semantic relevance.
@@ -161,7 +161,7 @@ def search_memory_for_items(user_id: str, message: str) -> list:
         search_query = "project idea decision status" if is_status_query else message
         
         # Search for items in the /items/{actor_id} namespace
-        # Items are stored directly via BatchCreateMemoryRecords (not via strategies)
+        # Items are stored directly via batch_create_memory_records (not via strategies)
         namespace = f'/items/{user_id}'
         
         response = client.retrieve_memories(

@@ -474,7 +474,7 @@ class ItemSyncModule:
     
     def store_item_in_memory(self, actor_id: str, item: ItemMetadata) -> bool:
         """
-        Store item metadata in Memory using BatchCreateMemoryRecords API.
+        Store item metadata in Memory using batch_create_memory_records API.
         
         Uses the batch API to store items directly without strategy processing.
         This preserves the structured metadata exactly as formatted, avoiding
@@ -491,16 +491,16 @@ class ItemSyncModule:
             
         Validates: Requirements 1.6, 5.4
         """
+        if not self.memory_client:
+            return False
+        
         try:
-            # Use boto3 directly for batch_create_memory_records
-            # (MemoryClient doesn't expose this method)
-            client = boto3.client('bedrock-agentcore', region_name=self.region)
-            
             # Format item as text for storage
             item_text = item.to_memory_text()
             
-            # Store directly using batch API - bypasses strategy processing
-            response = client.batch_create_memory_records(
+            # Use the gmdp_client's batch_create_memory_records API
+            # This bypasses strategy processing and stores directly
+            response = self.memory_client.gmdp_client.batch_create_memory_records(
                 memoryId=self.memory_id,
                 records=[{
                     'requestIdentifier': item.sb_id,
@@ -639,7 +639,7 @@ class ItemSyncModule:
         Used for health check comparison. Searches Memory for all stored
         items and parses their metadata from the stored record text.
         
-        Items are stored in /items/{actor_id} namespace using BatchCreateMemoryRecords.
+        Items are stored in /items/{actor_id} namespace using batch_create_memory_records.
         
         Args:
             actor_id: User/actor ID for scoped storage
@@ -657,7 +657,7 @@ class ItemSyncModule:
         
         try:
             # Search for all items in the /items/{actor_id} namespace
-            # Items are stored directly via BatchCreateMemoryRecords
+            # Items are stored directly via batch_create_memory_records
             namespace = f'/items/{actor_id}'
             
             response = self.memory_client.retrieve_memories(
