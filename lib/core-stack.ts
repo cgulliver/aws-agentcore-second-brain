@@ -584,7 +584,7 @@ export class CoreStack extends cdk.Stack {
       runtime: lambda.Runtime.NODEJS_20_X,
       architecture: lambda.Architecture.ARM_64,
       memorySize: 512,
-      timeout: cdk.Duration.seconds(60), // AgentCore calls may take time
+      timeout: cdk.Duration.seconds(120), // AgentCore + Nova 2 Lite may take time
       entry: path.join(__dirname, '../src/handlers/worker.ts'),
       handler: 'handler',
       bundling: {

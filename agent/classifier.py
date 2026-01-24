@@ -706,6 +706,10 @@ async def invoke(payload=None):
                         context_lines.append(f"- {item.item_type}: \"{item.title}\" (sb_id: {item.sb_id}){status_str}{tags_str}")
                     item_context = "\n".join(context_lines)
                     print(f"Info: Injected {len(items)} items into context")
+                    # Debug: Print the actual items being injected
+                    print(f"Debug: Item context:\n{item_context}")
+                else:
+                    print("Warning: No items found in Memory or CodeCommit")
             except Exception as e:
                 # Log but don't fail - context injection is optional
                 print(f"Warning: Item context injection failed: {e}")
@@ -722,6 +726,9 @@ async def invoke(payload=None):
         # Invoke agent
         response = agent(user_message)
         response_text = response.message['content'][0]['text']
+        
+        # Debug: Log the raw LLM response for query intents
+        print(f"Debug: Raw LLM response (first 1000 chars):\n{response_text[:1000]}")
         
         # Extract JSON from response (handles both single and multi-item)
         action_plan = extract_json_from_response(response_text)
