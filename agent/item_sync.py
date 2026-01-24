@@ -143,6 +143,7 @@ class ItemSyncModule:
         Parse YAML front matter from markdown content.
         
         Uses simple regex parsing to avoid PyYAML dependency in Lambda.
+        Handles Obsidian-compatible format with blank lines around delimiters.
         
         Args:
             content: Markdown file content
@@ -155,12 +156,16 @@ class ItemSyncModule:
         if not content.startswith('---\n'):
             return None
         
-        # Find closing delimiter
-        end_match = re.search(r'\n---\n', content[4:])
-        if not end_match:
-            return None
-        
-        yaml_block = content[4:4 + end_match.start()]
+        # Find closing delimiter (may have blank line before it)
+        # Try \n\n---\n first (Obsidian format), then \n---\n (standard)
+        end_match = re.search(r'\n\n---\n', content[4:])
+        if end_match:
+            yaml_block = content[4:4 + end_match.start()]
+        else:
+            end_match = re.search(r'\n---\n', content[4:])
+            if not end_match:
+                return None
+            yaml_block = content[4:4 + end_match.start()]
         
         try:
             return self._parse_simple_yaml(yaml_block)

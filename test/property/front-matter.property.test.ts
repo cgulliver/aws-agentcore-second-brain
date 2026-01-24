@@ -255,7 +255,7 @@ describe('Front Matter Property Tests', () => {
       fc.assert(
         fc.property(
           fc.constantFrom('idea', 'decision', 'project') as fc.Arbitrary<'idea' | 'decision' | 'project'>,
-          fc.string({ minLength: 5, maxLength: 50 }).filter((s) => !s.includes('"')),
+          fc.string({ minLength: 5, maxLength: 50 }).filter((s) => !s.includes('"') && !s.includes(':') && !s.includes('#') && !s.includes('\n')),
           (type, title) => {
             const frontMatter: FrontMatter = {
               id: generateSbId(),
@@ -274,7 +274,8 @@ describe('Front Matter Property Tests', () => {
             // Must contain all required fields
             expect(yaml).toContain(`id: ${frontMatter.id}`);
             expect(yaml).toContain(`type: ${frontMatter.type}`);
-            expect(yaml).toContain(`title: "${frontMatter.title}"`);
+            // Title is unquoted when no special characters
+            expect(yaml).toContain(`title: ${frontMatter.title}`);
             expect(yaml).toContain(`created_at: ${frontMatter.created_at}`);
             expect(yaml).toContain('tags:');
             expect(yaml).toContain('  - tag1');
@@ -350,6 +351,7 @@ describe('Front Matter Property Tests', () => {
 describe('Front Matter Parsing Property Tests', () => {
   // Feature: front-matter-linked-thinking, Property 13: Front Matter Parsing Round Trip
   // For any valid front matter, parseFrontMatter SHALL extract all fields correctly
+  // Note: Tags and links are now stored at bottom of note, not in front matter
   describe('Property 13: Front Matter Parsing Round Trip', () => {
     it('parseFrontMatter extracts all fields from generated front matter', async () => {
       const { parseFrontMatter } = await import('../../src/components/knowledge-search');
@@ -357,9 +359,8 @@ describe('Front Matter Parsing Property Tests', () => {
       fc.assert(
         fc.property(
           fc.constantFrom('idea', 'decision', 'project') as fc.Arbitrary<'idea' | 'decision' | 'project'>,
-          fc.string({ minLength: 3, maxLength: 30 }).filter((s) => !s.includes('"') && !s.includes('\n')),
-          fc.array(fc.stringMatching(/^[a-z][a-z0-9-]{1,15}$/), { minLength: 0, maxLength: 4 }),
-          (type, title, tags) => {
+          fc.string({ minLength: 3, maxLength: 30 }).filter((s) => !s.includes('"') && !s.includes('\n') && s.trim().length > 0),
+          (type, title) => {
             const sbId = generateSbId();
             const createdAt = new Date().toISOString();
             
@@ -368,7 +369,7 @@ describe('Front Matter Parsing Property Tests', () => {
               type,
               title,
               created_at: createdAt,
-              tags,
+              tags: [], // Tags go in footer, not front matter
             };
             
             const yaml = generateFrontMatter(frontMatter);
@@ -377,9 +378,9 @@ describe('Front Matter Parsing Property Tests', () => {
             expect(parsed).not.toBeNull();
             expect(parsed?.id).toBe(sbId);
             expect(parsed?.type).toBe(type);
-            expect(parsed?.title).toBe(title);
+            expect(parsed?.title).toBe(title.trim()); // Parser trims whitespace
             expect(parsed?.created_at).toBe(createdAt);
-            expect(parsed?.tags).toEqual(tags);
+            // Tags are now in footer, not front matter
             
             return true;
           }

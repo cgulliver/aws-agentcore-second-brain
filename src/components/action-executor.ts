@@ -34,7 +34,7 @@ import {
 } from './receipt-logger';
 import type { SystemPromptMetadata } from './system-prompt-loader';
 import { generateSbId } from './sb-id';
-import { generateFrontMatter, generateWikilink, type FrontMatter } from './markdown-templates';
+import { generateFrontMatter, generateWikilink, generateTagsAndLinksFooter, type FrontMatter } from './markdown-templates';
 import { extractTags } from './tag-extractor';
 import {
   searchKnowledgeBase,
@@ -150,6 +150,7 @@ interface SourceMetadata {
 
 /**
  * Inject front matter into content for idea/decision/project
+ * Tags and links are added at the bottom of the note content.
  * 
  * Validates: Requirements 2.1, 2.2, 2.3, 2.5
  * Validates: Requirements 3.1, 3.2 (cross-item linking)
@@ -159,21 +160,39 @@ function injectFrontMatter(
   classification: 'idea' | 'decision' | 'project',
   title: string,
   source?: SourceMetadata,
-  linkedItems?: LinkedItem[]
+  linkedItems?: LinkedItem[],
+  options?: {
+    summary?: string;      // LLM-generated summary (preferred)
+    tags?: string[];       // LLM-generated tags (preferred)
+    parent?: string;       // Parent item sb_id (e.g., "sb-1234567")
+  }
 ): { content: string; sbId: string } {
   // Generate unique SB_ID
   const sbId = generateSbId();
   
-  // Extract tags from content
-  const tags = extractTags(content, title);
+  // Use LLM-generated tags if provided, otherwise fall back to extraction
+  const tags = options?.tags && options.tags.length > 0
+    ? options.tags
+    : extractTags(content, title);
   
-  // Build front matter
+  // Build links from linked_items (cross-item linking)
+  const links = linkedItems && linkedItems.length > 0
+    ? linkedItems.map(item => `[[${item.sb_id}]]`)
+    : [];
+  
+  // Use LLM-generated summary if provided, otherwise generate from content
+  const summary = options?.summary || generateSummary(content, title);
+  
+  // Build front matter (tags and links in BOTH front matter AND footer)
   const frontMatter: FrontMatter = {
     id: sbId,
     type: classification,
     title: title,
+    summary: summary,
+    parent: options?.parent ? `[[${options.parent}]]` : undefined,
     created_at: new Date().toISOString(),
-    tags,
+    tags: tags,   // Tags in front matter for machine queries
+    links: links, // Links in front matter for graph queries
   };
   
   // Add source metadata if provided
@@ -184,13 +203,11 @@ function injectFrontMatter(
     };
   }
   
-  // Add links from linked_items (cross-item linking)
-  if (linkedItems && linkedItems.length > 0) {
-    frontMatter.links = linkedItems.map(item => `[[${item.sb_id}]]`);
-  }
-  
-  // Generate front matter string and prepend to content
+  // Generate front matter string
   const frontMatterStr = generateFrontMatter(frontMatter);
+  
+  // Generate tags and links footer for bottom of note
+  const footer = generateTagsAndLinksFooter(tags, links);
   
   // Check if content already has front matter (shouldn't, but be safe)
   if (content.startsWith('---\n')) {
@@ -198,9 +215,43 @@ function injectFrontMatter(
   }
   
   return {
-    content: frontMatterStr + content,
+    content: frontMatterStr + content + footer,
     sbId,
   };
+}
+
+/**
+ * Generate a one-line summary from content (fallback when LLM doesn't provide one)
+ * Takes first sentence or ~100 chars, whichever is shorter
+ */
+function generateSummary(content: string, title: string): string {
+  // Remove markdown formatting
+  const clean = content
+    .replace(/^#+\s+.*/gm, '') // Remove headings
+    .replace(/\*\*|__/g, '')   // Remove bold
+    .replace(/\*|_/g, '')      // Remove italic
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // Remove links, keep text
+    .replace(/\n+/g, ' ')      // Collapse newlines
+    .trim();
+  
+  if (!clean || clean.length < 10) {
+    return title; // Fall back to title
+  }
+  
+  // Find first sentence
+  const sentenceEnd = clean.search(/[.!?]\s/);
+  if (sentenceEnd > 0 && sentenceEnd < 150) {
+    return clean.slice(0, sentenceEnd + 1).trim();
+  }
+  
+  // Otherwise take first ~100 chars at word boundary
+  if (clean.length <= 100) {
+    return clean;
+  }
+  
+  const truncated = clean.slice(0, 100);
+  const lastSpace = truncated.lastIndexOf(' ');
+  return (lastSpace > 50 ? truncated.slice(0, lastSpace) : truncated) + '...';
 }
 
 /**
@@ -553,12 +604,20 @@ async function executeCodeCommitOperations(
         messageTs: slackContext.message_ts,
       } : undefined;
       
+      // Get parent from linked_project if available
+      const parent = normalizedPlan.linked_project?.sb_id;
+      
       const { content: contentWithFrontMatter, sbId } = injectFrontMatter(
         contentToWrite,
         normalizedPlan.classification,
         normalizedPlan.title,
         source,
-        normalizedPlan.linked_items
+        normalizedPlan.linked_items,
+        { 
+          parent,
+          summary: normalizedPlan.summary,  // LLM-generated
+          tags: normalizedPlan.tags,        // LLM-generated
+        }
       );
       contentToWrite = contentWithFrontMatter;
       generatedSbId = sbId;

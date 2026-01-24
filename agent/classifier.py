@@ -656,7 +656,7 @@ async def invoke(payload=None):
     """
     Main entrypoint for the classifier agent.
     
-    Expected payload:
+    Expected payload for classification:
     {
         "prompt": "User message to classify",
         "system_prompt": "System prompt content",
@@ -664,7 +664,15 @@ async def invoke(payload=None):
         "user_id": "Slack user_id for Memory actor_id"
     }
     
-    Returns Action Plan JSON (single or multi-item format).
+    Expected payload for sync operations:
+    {
+        "sync_operation": "health_check" | "sync_item" | "sync_all" | "delete_item",
+        "actor_id": str,
+        ... operation-specific fields
+    }
+    
+    Returns Action Plan JSON (single or multi-item format) for classification,
+    or sync result for sync operations.
     
     Validates: Requirements 2.1, 2.2, 2.3, 2.4
     """
@@ -674,6 +682,10 @@ async def invoke(payload=None):
                 "status": "error",
                 "error": "No payload provided"
             }
+        
+        # Route sync operations to dedicated handler
+        if payload.get("sync_operation"):
+            return handle_sync_operation(payload)
         
         user_message = payload.get("prompt", "")
         system_prompt = payload.get("system_prompt", "")
@@ -696,6 +708,11 @@ async def invoke(payload=None):
             - content: formatted content
             - file_operations: array of file operations
             Return only valid JSON."""
+        
+        # STEP 1: Ensure Memory is initialized before classification
+        # If no sync marker exists, do full sync first (cold start scenario)
+        if ITEM_SYNC_AVAILABLE:
+            ensure_memory_initialized(user_id)
         
         # Fetch item context using Memory-first retrieval with CodeCommit fallback
         # Validates: Requirements 4.1, 4.2, 4.3
@@ -764,6 +781,10 @@ async def invoke(payload=None):
             # Include memory status in response
             memory_enabled = session_manager is not None
             
+            # Run delta sync after multi-item classification completes
+            if ITEM_SYNC_AVAILABLE:
+                run_delta_sync(user_id)
+            
             return {
                 "status": "success",
                 "action_plan": action_plan,  # Returns { "items": [...] }
@@ -809,6 +830,11 @@ async def invoke(payload=None):
             except Exception as e:
                 # Log but don't fail - Memory is optional
                 print(f"Warning: Failed to save to Memory: {e}")
+        
+        # STEP 2: Run delta sync after classification completes
+        # This keeps Memory up-to-date without blocking the response
+        if ITEM_SYNC_AVAILABLE:
+            run_delta_sync(user_id)
         
         return {
             "status": "success",
@@ -861,6 +887,280 @@ def record_fix_preference(user_id: str, original_classification: str, corrected_
     except Exception as e:
         # Log but don't fail - preference learning is optional
         print(f"Warning: Failed to record fix preference: {e}")
+
+
+# ============================================================================
+# Sync Operations (moved from sync Lambda)
+# ============================================================================
+
+def ensure_memory_initialized(actor_id: str) -> bool:
+    """
+    Check if Memory has been initialized (has sync marker) and sync if needed.
+    
+    This ensures the first classification request has item context available.
+    If no sync marker exists, performs a full sync before returning.
+    
+    Args:
+        actor_id: User/actor ID for scoped storage
+        
+    Returns:
+        True if memory is initialized (or was just initialized), False on error
+    """
+    if not ITEM_SYNC_AVAILABLE or not MEMORY_ID:
+        return False
+    
+    try:
+        sync_module = ItemSyncModule(memory_id=MEMORY_ID, region=AWS_REGION)
+        
+        # Check for sync marker
+        sync_marker = sync_module.get_sync_marker(actor_id)
+        
+        if sync_marker:
+            print(f"Info: Memory already initialized (sync marker: {sync_marker[:7]}...)")
+            return True
+        
+        # No sync marker - need to do initial sync
+        print("Info: No sync marker found, performing initial sync...")
+        result = sync_module.sync_items(actor_id)
+        
+        if result.success:
+            print(f"Info: Initial sync completed ({result.items_synced} items)")
+            return True
+        else:
+            print(f"Warning: Initial sync failed: {result.error}")
+            return False
+            
+    except Exception as e:
+        print(f"Warning: Failed to check/initialize memory: {e}")
+        return False
+
+
+def run_delta_sync(actor_id: str) -> None:
+    """
+    Run delta sync after classification completes.
+    
+    This keeps Memory up-to-date with any changes made since last sync.
+    Called after the response is sent to minimize latency impact.
+    
+    Args:
+        actor_id: User/actor ID for scoped storage
+    """
+    if not ITEM_SYNC_AVAILABLE or not MEMORY_ID:
+        return
+    
+    try:
+        sync_module = ItemSyncModule(memory_id=MEMORY_ID, region=AWS_REGION)
+        
+        # Check if sync is needed (compare marker to HEAD)
+        sync_marker = sync_module.get_sync_marker(actor_id)
+        head_commit = sync_module.get_codecommit_head()
+        
+        if not head_commit:
+            print("Warning: Could not get CodeCommit HEAD for delta sync")
+            return
+        
+        if sync_marker == head_commit:
+            print("Info: Delta sync skipped (already at HEAD)")
+            return
+        
+        # Perform delta sync
+        print(f"Info: Running delta sync ({sync_marker[:7] if sync_marker else 'none'}... -> {head_commit[:7]}...)")
+        result = sync_module.sync_items(actor_id)
+        
+        if result.success:
+            print(f"Info: Delta sync completed ({result.items_synced} synced, {result.items_deleted} deleted)")
+        else:
+            print(f"Warning: Delta sync failed: {result.error}")
+            
+    except Exception as e:
+        print(f"Warning: Delta sync error: {e}")
+
+
+def handle_sync_operation(payload: dict) -> dict:
+    """
+    Handle sync operations (health_check, sync_item, sync_all, delete_item).
+    
+    This replaces the separate sync Lambda - the classifier already has
+    bedrock_agentcore installed, so it can handle Memory operations directly.
+    
+    Args:
+        payload: {
+            "sync_operation": "health_check" | "sync_item" | "sync_all" | "delete_item",
+            "actor_id": str,
+            "item_path": str (for sync_item),
+            "item_content": str (for sync_item),
+            "sb_id": str (for delete_item),
+            "force_full_sync": bool (for sync_all)
+        }
+    
+    Returns:
+        {
+            "success": bool,
+            "items_synced": int,
+            "items_deleted": int,
+            "error": str | None,
+            "health_report": dict | None
+        }
+    """
+    if not ITEM_SYNC_AVAILABLE:
+        return {
+            "success": False,
+            "items_synced": 0,
+            "items_deleted": 0,
+            "error": "ItemSyncModule not available",
+            "health_report": None,
+        }
+    
+    operation = payload.get('sync_operation')
+    actor_id = payload.get('actor_id', 'anonymous')
+    
+    if not operation:
+        return {
+            "success": False,
+            "items_synced": 0,
+            "items_deleted": 0,
+            "error": "Missing sync_operation field",
+            "health_report": None,
+        }
+    
+    # Initialize sync module
+    sync_module = ItemSyncModule(memory_id=MEMORY_ID, region=AWS_REGION)
+    
+    if operation == 'health_check':
+        return _handle_health_check(sync_module, actor_id)
+    elif operation == 'sync_item':
+        return _handle_sync_item(sync_module, actor_id, payload)
+    elif operation == 'sync_all':
+        return _handle_sync_all(sync_module, actor_id, payload)
+    elif operation == 'delete_item':
+        return _handle_delete_item(sync_module, actor_id, payload)
+    else:
+        return {
+            "success": False,
+            "items_synced": 0,
+            "items_deleted": 0,
+            "error": f"Unknown sync_operation: {operation}",
+            "health_report": None,
+        }
+
+
+def _handle_health_check(sync_module, actor_id: str) -> dict:
+    """Handle health check operation."""
+    try:
+        health_report = sync_module.get_health_report(actor_id)
+        return {
+            "success": True,
+            "items_synced": 0,
+            "items_deleted": 0,
+            "error": None,
+            "health_report": {
+                "codecommitCount": health_report.codecommit_count,
+                "memoryCount": health_report.memory_count,
+                "inSync": health_report.in_sync,
+                "lastSyncTimestamp": health_report.last_sync_timestamp,
+                "lastSyncCommitId": health_report.last_sync_commit_id,
+                "missingInMemory": health_report.missing_in_memory,
+                "extraInMemory": health_report.extra_in_memory,
+            },
+        }
+    except Exception as e:
+        print(f"Error during health check: {e}")
+        return {
+            "success": False,
+            "items_synced": 0,
+            "items_deleted": 0,
+            "error": f"Health check failed: {str(e)}",
+            "health_report": None,
+        }
+
+
+def _handle_sync_item(sync_module, actor_id: str, payload: dict) -> dict:
+    """Handle single item sync operation."""
+    item_path = payload.get('item_path')
+    item_content = payload.get('item_content')
+    
+    if not item_path or not item_content:
+        return {
+            "success": False,
+            "items_synced": 0,
+            "items_deleted": 0,
+            "error": "Missing item_path or item_content",
+            "health_report": None,
+        }
+    
+    try:
+        result = sync_module.sync_single_item(actor_id, item_path, item_content)
+        return {
+            "success": result.success,
+            "items_synced": result.items_synced,
+            "items_deleted": result.items_deleted,
+            "error": result.error,
+            "health_report": None,
+        }
+    except Exception as e:
+        print(f"Error syncing item: {e}")
+        return {
+            "success": False,
+            "items_synced": 0,
+            "items_deleted": 0,
+            "error": f"Sync item failed: {str(e)}",
+            "health_report": None,
+        }
+
+
+def _handle_sync_all(sync_module, actor_id: str, payload: dict) -> dict:
+    """Handle full sync operation."""
+    try:
+        result = sync_module.sync_items(actor_id)
+        return {
+            "success": result.success,
+            "items_synced": result.items_synced,
+            "items_deleted": result.items_deleted,
+            "error": result.error,
+            "health_report": None,
+        }
+    except Exception as e:
+        print(f"Error during full sync: {e}")
+        return {
+            "success": False,
+            "items_synced": 0,
+            "items_deleted": 0,
+            "error": f"Full sync failed: {str(e)}",
+            "health_report": None,
+        }
+
+
+def _handle_delete_item(sync_module, actor_id: str, payload: dict) -> dict:
+    """Handle item deletion operation."""
+    sb_id = payload.get('sb_id')
+    
+    if not sb_id:
+        return {
+            "success": False,
+            "items_synced": 0,
+            "items_deleted": 0,
+            "error": "Missing sb_id",
+            "health_report": None,
+        }
+    
+    try:
+        success = sync_module.delete_item_from_memory(actor_id, sb_id)
+        return {
+            "success": success,
+            "items_synced": 0,
+            "items_deleted": 1 if success else 0,
+            "error": None,
+            "health_report": None,
+        }
+    except Exception as e:
+        print(f"Error deleting item: {e}")
+        return {
+            "success": False,
+            "items_synced": 0,
+            "items_deleted": 0,
+            "error": f"Delete item failed: {str(e)}",
+            "health_report": None,
+        }
 
 
 if __name__ == "__main__":

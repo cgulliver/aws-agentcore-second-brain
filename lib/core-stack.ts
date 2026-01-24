@@ -398,6 +398,8 @@ export class CoreStack extends cdk.Stack {
     // =========================================================================
     
     // Sync Lambda (Python) - handles sync operations between CodeCommit and Memory
+    // Note: bedrock_agentcore package must be pre-installed in agent/ directory
+    // Run: pip install bedrock-agentcore -t agent/ before deploying
     const syncLambda = new lambda.Function(this, 'SyncLambda', {
       functionName: 'second-brain-sync',
       description: 'Sync items between CodeCommit and AgentCore Memory',
@@ -611,14 +613,11 @@ export class CoreStack extends cdk.Stack {
         SES_FROM_EMAIL: senderEmail,
         EMAIL_MODE: 'live', // Production mode - emails sent to OmniFocus
         NODE_OPTIONS: '--enable-source-maps',
-        DEPLOY_VERSION: '61', // Force env var restore after manual wipe
-        // Task 11.3: Add Sync Lambda ARN for Memory-Repo sync
-        SYNC_LAMBDA_ARN: syncLambda.functionArn,
+        DEPLOY_VERSION: '67', // Sync operations moved to classifier
+        // Note: Sync operations now use AgentCore classifier (AGENT_RUNTIME_ARN)
+        // instead of separate sync Lambda
       },
     });
-
-    // Task 11.3: Grant Worker permission to invoke Sync Lambda
-    syncLambda.grantInvoke(this.workerFunction);
 
     // Add SQS event source from Ingress queue
     this.workerFunction.addEventSource(

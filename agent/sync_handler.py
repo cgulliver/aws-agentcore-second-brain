@@ -199,12 +199,22 @@ def _handle_health_check(sync_module: ItemSyncModule, event: dict) -> dict:
     
     try:
         health_report = sync_module.get_health_report(actor_id)
+        # Convert HealthReport dataclass to dict for JSON serialization
+        health_report_dict = {
+            "codecommitCount": health_report.codecommit_count,
+            "memoryCount": health_report.memory_count,
+            "inSync": health_report.in_sync,
+            "lastSyncTimestamp": health_report.last_sync_timestamp,
+            "lastSyncCommitId": health_report.last_sync_commit_id,
+            "missingInMemory": health_report.missing_in_memory,
+            "extraInMemory": health_report.extra_in_memory,
+        }
         return {
             "success": True,
             "items_synced": 0,
             "items_deleted": 0,
             "error": None,
-            "health_report": health_report,
+            "health_report": health_report_dict,
         }
     except Exception as e:
         logger.error(f"Error during health check: {e}")

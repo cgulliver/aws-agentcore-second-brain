@@ -10,7 +10,7 @@
 import { describe, it, expect } from 'vitest';
 import * as fc from 'fast-check';
 import { validateActionPlan, type LinkedItem } from '../../src/types/action-plan';
-import { generateFrontMatter, type FrontMatter } from '../../src/components/markdown-templates';
+import { generateFrontMatter, generateTagsAndLinksFooter, type FrontMatter } from '../../src/components/markdown-templates';
 
 // Generators
 const sbIdGen = fc.hexaString({ minLength: 7, maxLength: 7 })
@@ -143,30 +143,23 @@ describe('Property 2: Wiki-Link Format', () => {
     );
   });
 
-  it('should include links in front matter YAML format', () => {
+  it('should include links in footer format (not front matter)', () => {
     fc.assert(
       fc.property(
-        sbIdGen,
-        fc.string({ minLength: 1, maxLength: 50 }).filter(s => !s.includes('"') && !s.includes('\n')),
+        fc.array(fc.constantFrom('tag1', 'tag2', 'tag3'), { minLength: 1, maxLength: 3 }),
         linksArrayGen.filter(arr => arr.length > 0),
-        (id, title, links) => {
-          const frontMatter: FrontMatter = {
-            id,
-            type: 'idea',
-            title,
-            created_at: new Date().toISOString(),
-            tags: ['test'],
-            links,
-          };
+        (tags, links) => {
+          const footer = generateTagsAndLinksFooter(tags, links);
           
-          const yaml = generateFrontMatter(frontMatter);
+          // Should contain --- separator
+          expect(footer).toContain('---');
           
-          // Should contain links section
-          expect(yaml).toContain('links:');
+          // Should contain Links: line
+          expect(footer).toContain('Links:');
           
-          // Each link should be in the YAML
+          // Each link should be in the footer
           for (const link of links) {
-            expect(yaml).toContain(`"${link}"`);
+            expect(footer).toContain(link);
           }
         }
       ),

@@ -270,8 +270,8 @@ describe('Property 6: Status Update Content Preservation', () => {
   it('should preserve all front matter fields through parse/serialize round-trip', () => {
     fc.assert(
       fc.property(frontMatterFieldsGen, projectStatusGen, markdownBodyGen, (fields, status, body) => {
-        // Create front matter with status
-        const frontMatter = { ...fields, status };
+        // Create front matter with status (tags go in footer, not front matter)
+        const frontMatter = { ...fields, status, tags: [] };
         
         // Serialize to markdown
         const markdown = serializeFrontMatter(frontMatter, body);
@@ -286,10 +286,7 @@ describe('Property 6: Status Update Content Preservation', () => {
         expect(parsed.frontMatter.created_at).toBe(fields.created_at);
         expect(parsed.frontMatter.status).toBe(status);
         
-        // Tags array should be preserved
-        if (fields.tags.length > 0) {
-          expect(parsed.frontMatter.tags).toEqual(fields.tags);
-        }
+        // Tags are now stored in footer, not front matter
       }),
       { numRuns: 100 }
     );

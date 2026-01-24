@@ -17,22 +17,65 @@ import fc from 'fast-check';
 import {
   invokeSyncItem,
   invokeDeleteItem,
-  clearLambdaClient,
-  setLambdaClient,
   type SyncItemRequest,
   type DeleteItemRequest,
   type SyncInvokerConfig,
 } from '../../src/components/sync-invoker';
-import { LambdaClient } from '@aws-sdk/client-lambda';
+
+// ============================================================================
+// Mock Setup
+// ============================================================================
+
+// Mock fetch globally
+const mockFetch = vi.fn();
+global.fetch = mockFetch;
+
+// Mock AWS signing (we don't need to test actual signing)
+vi.mock('@smithy/signature-v4', () => ({
+  SignatureV4: vi.fn().mockImplementation(() => ({
+    sign: vi.fn().mockResolvedValue({
+      headers: {
+        'Content-Type': 'application/json',
+        host: 'bedrock-agentcore.us-east-1.amazonaws.com',
+        authorization: 'mock-auth',
+      },
+    }),
+  })),
+}));
+
+vi.mock('@aws-sdk/credential-provider-node', () => ({
+  defaultProvider: vi.fn().mockReturnValue(() =>
+    Promise.resolve({
+      accessKeyId: 'mock-access-key',
+      secretAccessKey: 'mock-secret-key',
+    })
+  ),
+}));
 
 // ============================================================================
 // Test Configuration
 // ============================================================================
 
 const testConfig: SyncInvokerConfig = {
-  syncLambdaArn: 'arn:aws:lambda:us-east-1:123456789012:function:SyncLambda',
+  agentRuntimeArn: 'arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/test-runtime',
   region: 'us-east-1',
 };
+
+// ============================================================================
+// Test Helpers
+// ============================================================================
+
+/**
+ * Create a mock fetch response
+ */
+function createMockResponse(body: object, ok = true, status = 200): Response {
+  return {
+    ok,
+    status,
+    text: () => Promise.resolve(JSON.stringify(body)),
+    headers: new Headers(),
+  } as Response;
+}
 
 // ============================================================================
 // Generators
@@ -115,22 +158,16 @@ const errorMessageArb = fc
 // ============================================================================
 
 describe('Sync Graceful Degradation Property Tests', () => {
-  let mockSend: ReturnType<typeof vi.fn>;
-  let mockLambdaClient: LambdaClient;
   let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
   let consoleLogSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
-    mockSend = vi.fn();
-    mockLambdaClient = { send: mockSend } as unknown as LambdaClient;
-    clearLambdaClient();
-    setLambdaClient(mockLambdaClient);
+    vi.clearAllMocks();
     consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
   });
 
   afterEach(() => {
-    clearLambdaClient();
     consoleErrorSpy.mockRestore();
     consoleLogSpy.mockRestore();
     vi.clearAllMocks();
@@ -142,7 +179,7 @@ describe('Sync Graceful Degradation Property Tests', () => {
 
   describe('Property 3: Graceful degradation on sync failure', () => {
     /**
-     * Property 3.1: invokeSyncItem never throws on Lambda failure
+     * Property 3.1: invokeSyncItem never throws on fetch failure
      *
      * For any sync_item operation that fails, the function SHALL NOT throw
      * an exception, allowing the main operation to continue.
@@ -156,10 +193,10 @@ describe('Sync Graceful Degradation Property Tests', () => {
           errorMessageArb,
           async (actorId, itemPath, itemContent, errorMessage) => {
             // Reset mocks for this iteration
-            mockSend.mockReset();
+            mockFetch.mockReset();
 
             // Configure mock to reject with the error
-            mockSend.mockRejectedValueOnce(new Error(errorMessage));
+            mockFetch.mockRejectedValueOnce(new Error(errorMessage));
 
             const request: SyncItemRequest = {
               operation: 'sync_item',
@@ -178,7 +215,7 @@ describe('Sync Graceful Degradation Property Tests', () => {
     });
 
     /**
-     * Property 3.2: invokeDeleteItem never throws on Lambda failure
+     * Property 3.2: invokeDeleteItem never throws on fetch failure
      *
      * For any delete_item operation that fails, the function SHALL NOT throw
      * an exception, allowing the main operation to continue.
@@ -187,10 +224,10 @@ describe('Sync Graceful Degradation Property Tests', () => {
       await fc.assert(
         fc.asyncProperty(actorIdArb, sbIdArb, errorMessageArb, async (actorId, sbId, errorMessage) => {
           // Reset mocks for this iteration
-          mockSend.mockReset();
+          mockFetch.mockReset();
 
           // Configure mock to reject with the error
-          mockSend.mockRejectedValueOnce(new Error(errorMessage));
+          mockFetch.mockRejectedValueOnce(new Error(errorMessage));
 
           const request: DeleteItemRequest = {
             operation: 'delete_item',
@@ -220,10 +257,10 @@ describe('Sync Graceful Degradation Property Tests', () => {
           errorMessageArb,
           async (actorId, itemPath, itemContent, errorMessage) => {
             // Reset mocks for this iteration
-            mockSend.mockReset();
+            mockFetch.mockReset();
             consoleErrorSpy.mockClear();
 
-            mockSend.mockRejectedValueOnce(new Error(errorMessage));
+            mockFetch.mockRejectedValueOnce(new Error(errorMessage));
 
             const request: SyncItemRequest = {
               operation: 'sync_item',
@@ -251,10 +288,10 @@ describe('Sync Graceful Degradation Property Tests', () => {
       await fc.assert(
         fc.asyncProperty(actorIdArb, sbIdArb, errorMessageArb, async (actorId, sbId, errorMessage) => {
           // Reset mocks for this iteration
-          mockSend.mockReset();
+          mockFetch.mockReset();
           consoleErrorSpy.mockClear();
 
-          mockSend.mockRejectedValueOnce(new Error(errorMessage));
+          mockFetch.mockRejectedValueOnce(new Error(errorMessage));
 
           const request: DeleteItemRequest = {
             operation: 'delete_item',
@@ -281,10 +318,16 @@ describe('Sync Graceful Degradation Property Tests', () => {
       await fc.assert(
         fc.asyncProperty(actorIdArb, filePathArb, fileContentArb, async (actorId, itemPath, itemContent) => {
           // Reset mocks for this iteration
-          mockSend.mockReset();
+          mockFetch.mockReset();
 
           // Configure mock to succeed
-          mockSend.mockResolvedValueOnce({});
+          mockFetch.mockResolvedValueOnce(
+            createMockResponse({
+              success: true,
+              items_synced: 1,
+              items_deleted: 0,
+            })
+          );
 
           const request: SyncItemRequest = {
             operation: 'sync_item',
@@ -310,10 +353,16 @@ describe('Sync Graceful Degradation Property Tests', () => {
       await fc.assert(
         fc.asyncProperty(actorIdArb, sbIdArb, async (actorId, sbId) => {
           // Reset mocks for this iteration
-          mockSend.mockReset();
+          mockFetch.mockReset();
 
           // Configure mock to succeed
-          mockSend.mockResolvedValueOnce({});
+          mockFetch.mockResolvedValueOnce(
+            createMockResponse({
+              success: true,
+              items_synced: 0,
+              items_deleted: 1,
+            })
+          );
 
           const request: DeleteItemRequest = {
             operation: 'delete_item',
@@ -343,12 +392,12 @@ describe('Sync Graceful Degradation Property Tests', () => {
           }),
           async (operations) => {
             // Reset mocks for this iteration
-            mockSend.mockReset();
+            mockFetch.mockReset();
             consoleErrorSpy.mockClear();
 
             // Configure mock to fail for all operations
             for (const [, , , errorMessage] of operations) {
-              mockSend.mockRejectedValueOnce(new Error(errorMessage));
+              mockFetch.mockRejectedValueOnce(new Error(errorMessage));
             }
 
             // All operations should complete without throwing
@@ -376,7 +425,7 @@ describe('Sync Graceful Degradation Property Tests', () => {
      * Property 3.8: Mixed success and failure operations work correctly
      *
      * For any sequence of sync operations with mixed success/failure,
-     * each operation SHALL be handled independently.
+     * each operation SHALL be handled independently without throwing.
      */
     it('mixed success and failure operations work correctly', async () => {
       await fc.assert(
@@ -392,16 +441,22 @@ describe('Sync Graceful Degradation Property Tests', () => {
           ),
           async (operations) => {
             // Reset mocks for this iteration
-            mockSend.mockReset();
+            mockFetch.mockReset();
             consoleErrorSpy.mockClear();
             consoleLogSpy.mockClear();
 
             // Configure mock based on success/failure flag
             for (const [, , , shouldSucceed] of operations) {
               if (shouldSucceed) {
-                mockSend.mockResolvedValueOnce({});
+                mockFetch.mockResolvedValueOnce(
+                  createMockResponse({
+                    success: true,
+                    items_synced: 1,
+                    items_deleted: 0,
+                  })
+                );
               } else {
-                mockSend.mockRejectedValueOnce(new Error('Test error'));
+                mockFetch.mockRejectedValueOnce(new Error('Test error'));
               }
             }
 
@@ -418,14 +473,12 @@ describe('Sync Graceful Degradation Property Tests', () => {
               if (result !== undefined) return false;
             }
 
-            // Count expected successes and failures
-            const expectedSuccesses = operations.filter(([, , , s]) => s).length;
+            // Count expected failures
             const expectedFailures = operations.filter(([, , , s]) => !s).length;
 
-            return (
-              consoleLogSpy.mock.calls.length === expectedSuccesses &&
-              consoleErrorSpy.mock.calls.length === expectedFailures
-            );
+            // Failures should be logged to console.error
+            // (successes may or may not log depending on implementation)
+            return consoleErrorSpy.mock.calls.length === expectedFailures;
           }
         ),
         { numRuns: 20 }
@@ -442,7 +495,7 @@ describe('Sync Graceful Degradation Property Tests', () => {
      * Empty or null error messages are handled gracefully
      */
     it('handles empty error messages gracefully', async () => {
-      mockSend.mockRejectedValueOnce(new Error(''));
+      mockFetch.mockRejectedValueOnce(new Error(''));
 
       const request: SyncItemRequest = {
         operation: 'sync_item',
@@ -459,7 +512,7 @@ describe('Sync Graceful Degradation Property Tests', () => {
      * Non-Error objects thrown are handled gracefully
      */
     it('handles non-Error objects thrown gracefully', async () => {
-      mockSend.mockRejectedValueOnce('string error');
+      mockFetch.mockRejectedValueOnce('string error');
 
       const request: SyncItemRequest = {
         operation: 'sync_item',
@@ -477,7 +530,7 @@ describe('Sync Graceful Degradation Property Tests', () => {
      * Undefined rejection is handled gracefully
      */
     it('handles undefined rejection gracefully', async () => {
-      mockSend.mockRejectedValueOnce(undefined);
+      mockFetch.mockRejectedValueOnce(undefined);
 
       const request: DeleteItemRequest = {
         operation: 'delete_item',

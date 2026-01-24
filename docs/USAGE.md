@@ -36,9 +36,10 @@ The system automatically syncs your knowledge items (projects, ideas, decisions)
 
 ### How It Works
 
-1. **Sync on Request**: Before classifying each message, the system syncs any new/changed items from CodeCommit to Memory
-2. **Semantic Retrieval**: When you mention a project or topic, Memory retrieves relevant items based on semantic similarity
-3. **Automatic Linking**: The classifier uses this context to populate `linked_items` in the Action Plan
+1. **Auto-Sync on First Call**: When Memory is empty (no sync marker), the classifier performs a full sync before classification
+2. **Delta Sync After Each Call**: After every classification, the system syncs any new/changed items from CodeCommit to Memory
+3. **Semantic Retrieval**: When you mention a project or topic, Memory retrieves relevant items based on semantic similarity
+4. **Automatic Linking**: The classifier uses this context to populate `linked_items` in the Action Plan
 
 ### What Gets Synced
 
@@ -51,6 +52,7 @@ Each item's metadata (SB_ID, title, type, tags, status) is stored for retrieval.
 
 ### Benefits
 
+- **No manual sync needed**: Memory stays up-to-date automatically
 - **No tool calls needed**: The LLM doesn't need to search - context is provided automatically
 - **Faster responses**: Eliminates tool call latency
 - **Better matching**: Semantic search finds related items even with different wording

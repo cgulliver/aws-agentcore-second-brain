@@ -39,6 +39,9 @@ export interface ParsedFrontMatter {
   id?: string;
   type?: string;
   title?: string;
+  alias?: string;
+  summary?: string;      // One-line description for LLM context
+  parent?: string;       // Parent item wikilink
   created_at?: string;
   updated_at?: string;
   tags?: string[];
@@ -116,10 +119,17 @@ export function parseFrontMatter(content: string): ParsedFrontMatter | null {
     return null;
   }
   
-  // Find the closing ---
-  const endIndex = content.indexOf('\n---\n', 4);
+  // Find the closing --- (may have blank line before it)
+  // Look for \n---\n or \n\n---\n pattern
+  let endIndex = content.indexOf('\n---\n', 4);
   if (endIndex === -1) {
-    return null;
+    // Try with blank line before closing ---
+    endIndex = content.indexOf('\n\n---\n', 4);
+    if (endIndex === -1) {
+      return null;
+    }
+    // Adjust to include the extra newline in the slice
+    endIndex += 1;
   }
   
   const yamlBlock = content.slice(4, endIndex);
@@ -171,6 +181,12 @@ export function parseFrontMatter(content: string): ParsedFrontMatter | null {
           // Handle quoted titles
           const titleMatch = value.match(/^"(.+)"$/) || value.match(/^'(.+)'$/);
           result.title = titleMatch ? titleMatch[1].replace(/\\"/g, '"') : value.trim();
+        } else if (key === 'alias') {
+          result.alias = value.trim();
+        } else if (key === 'summary') {
+          result.summary = value.trim();
+        } else if (key === 'parent') {
+          result.parent = value.trim();
         } else if (key === 'created_at') {
           result.created_at = value.trim();
         } else if (key === 'updated_at') {

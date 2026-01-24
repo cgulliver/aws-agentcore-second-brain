@@ -39,6 +39,7 @@ export interface ParsedFrontMatter {
  * Parse front matter from markdown content
  * 
  * Handles YAML front matter delimited by --- markers.
+ * Supports both Obsidian format (comma-separated tags) and YAML list format.
  * Returns empty front matter if none found or malformed.
  * 
  * Validates: Requirements 4.2, 4.3
@@ -55,10 +56,16 @@ export function parseFrontMatter(content: string): ParsedFrontMatter {
     return result;
   }
 
-  // Find closing delimiter
-  const endIndex = content.indexOf('\n---', 3);
+  // Find closing delimiter (may have blank line before it)
+  let endIndex = content.indexOf('\n---\n', 3);
+  let skipChars = 5; // \n---\n
   if (endIndex === -1) {
-    return result;
+    // Try with blank line before closing ---
+    endIndex = content.indexOf('\n\n---\n', 3);
+    skipChars = 6; // \n\n---\n
+    if (endIndex === -1) {
+      return result;
+    }
   }
 
   // Extract raw front matter (between delimiters)
@@ -66,7 +73,7 @@ export function parseFrontMatter(content: string): ParsedFrontMatter {
   result.raw = rawFrontMatter;
 
   // Extract body (after closing delimiter)
-  result.body = content.slice(endIndex + 4).trimStart();
+  result.body = content.slice(endIndex + skipChars).trimStart();
 
   // Parse YAML-like front matter (simple key: value parsing)
   const lines = rawFrontMatter.split('\n');
@@ -79,7 +86,7 @@ export function parseFrontMatter(content: string): ParsedFrontMatter {
     // Skip empty lines
     if (!trimmed) continue;
 
-    // Check for array item
+    // Check for array item (YAML list format)
     if (trimmed.startsWith('- ') && currentKey && currentArray !== null) {
       currentArray.push(trimmed.slice(2).trim());
       continue;
@@ -105,6 +112,14 @@ export function parseFrontMatter(content: string): ParsedFrontMatter {
         continue;
       }
 
+      // Handle tags/alias as comma-separated (Obsidian format)
+      if ((key === 'tags' || key === 'alias') && value && !value.startsWith('[')) {
+        // Parse comma-separated values into array
+        const items = value.split(',').map(s => s.trim()).filter(s => s.length > 0);
+        result.frontMatter[key] = items;
+        continue;
+      }
+
       // Handle quoted strings
       if ((value.startsWith('"') && value.endsWith('"')) ||
           (value.startsWith("'") && value.endsWith("'"))) {
@@ -126,9 +141,10 @@ export function parseFrontMatter(content: string): ParsedFrontMatter {
 }
 
 /**
- * Serialize front matter back to YAML format
+ * Serialize front matter back to YAML format (Obsidian-compatible)
  * 
- * Preserves field order and formatting.
+ * Note: Tags and links are stored at bottom of note content, not in front matter.
+ * This function preserves any existing tags/links fields for backwards compatibility.
  * 
  * Validates: Requirements 4.2, 4.3
  */
@@ -136,13 +152,24 @@ export function serializeFrontMatter(
   frontMatter: Record<string, unknown>,
   body: string
 ): string {
-  const lines: string[] = ['---'];
+  const lines: string[] = ['---', ''];  // Blank line after opening ---
 
   for (const [key, value] of Object.entries(frontMatter)) {
     if (Array.isArray(value)) {
-      lines.push(`${key}:`);
-      for (const item of value) {
-        lines.push(`  - ${item}`);
+      if (value.length === 0) {
+        lines.push(`${key}: []`);
+      } else if (key === 'links') {
+        // Links use quoted format
+        lines.push(`${key}:`);
+        for (const item of value) {
+          lines.push(`  - "${item}"`);
+        }
+      } else {
+        // Other arrays (tags) use plain format
+        lines.push(`${key}:`);
+        for (const item of value) {
+          lines.push(`  - ${item}`);
+        }
       }
     } else if (typeof value === 'string') {
       // Quote strings that contain special characters
@@ -156,6 +183,7 @@ export function serializeFrontMatter(
     }
   }
 
+  lines.push('');  // Blank line before closing ---
   lines.push('---');
   
   // Add body with proper spacing

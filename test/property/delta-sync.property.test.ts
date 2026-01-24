@@ -14,23 +14,62 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fc from 'fast-check';
-import {
-  invokeSyncAll,
-  clearLambdaClient,
-  setLambdaClient,
-  type SyncAllRequest,
-  type SyncInvokerConfig,
-} from '../../src/components/sync-invoker';
-import { LambdaClient } from '@aws-sdk/client-lambda';
+import { invokeSyncAll, type SyncAllRequest, type SyncInvokerConfig } from '../../src/components/sync-invoker';
+
+// ============================================================================
+// Mock Setup
+// ============================================================================
+
+// Mock fetch globally
+const mockFetch = vi.fn();
+global.fetch = mockFetch;
+
+// Mock AWS signing (we don't need to test actual signing)
+vi.mock('@smithy/signature-v4', () => ({
+  SignatureV4: vi.fn().mockImplementation(() => ({
+    sign: vi.fn().mockResolvedValue({
+      headers: {
+        'Content-Type': 'application/json',
+        host: 'bedrock-agentcore.us-east-1.amazonaws.com',
+        authorization: 'mock-auth',
+      },
+    }),
+  })),
+}));
+
+vi.mock('@aws-sdk/credential-provider-node', () => ({
+  defaultProvider: vi.fn().mockReturnValue(() =>
+    Promise.resolve({
+      accessKeyId: 'mock-access-key',
+      secretAccessKey: 'mock-secret-key',
+    })
+  ),
+}));
 
 // ============================================================================
 // Test Configuration
 // ============================================================================
 
 const testConfig: SyncInvokerConfig = {
-  syncLambdaArn: 'arn:aws:lambda:us-east-1:123456789012:function:SyncLambda',
+  agentRuntimeArn: 'arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/test-runtime',
   region: 'us-east-1',
 };
+
+// ============================================================================
+// Test Helpers
+// ============================================================================
+
+/**
+ * Create a mock fetch response
+ */
+function createMockResponse(body: object, ok = true, status = 200): Response {
+  return {
+    ok,
+    status,
+    text: () => Promise.resolve(JSON.stringify(body)),
+    headers: new Headers(),
+  } as Response;
+}
 
 // ============================================================================
 // Generators
@@ -67,17 +106,6 @@ const filePathArb = fc
   });
 
 /**
- * Generate a list of changed files (for delta sync scenarios)
- */
-const changedFilesArb = fc.array(
-  fc.tuple(
-    filePathArb,
-    fc.constantFrom('A', 'M', 'D') // Add, Modify, Delete
-  ).map(([path, changeType]) => ({ path, change_type: changeType })),
-  { minLength: 0, maxLength: 10 }
-);
-
-/**
  * Generate sync response for marker equals HEAD scenario (no operations)
  */
 const noOpSyncResponseArb = commitIdArb.map((commitId) => ({
@@ -92,11 +120,7 @@ const noOpSyncResponseArb = commitIdArb.map((commitId) => ({
  * Generate sync response for delta sync scenario (some operations)
  */
 const deltaSyncResponseArb = fc
-  .tuple(
-    fc.nat({ max: 20 }),
-    fc.nat({ max: 5 }),
-    commitIdArb
-  )
+  .tuple(fc.nat({ max: 20 }), fc.nat({ max: 5 }), commitIdArb)
   .map(([itemsSynced, itemsDeleted, commitId]) => ({
     success: true,
     items_synced: itemsSynced,
@@ -106,39 +130,20 @@ const deltaSyncResponseArb = fc
   }));
 
 // ============================================================================
-// Helper Functions
-// ============================================================================
-
-/**
- * Create a mock Lambda response payload
- */
-function createMockLambdaResponse(response: object): { Payload: Uint8Array } {
-  return {
-    Payload: new TextEncoder().encode(JSON.stringify(response)),
-  };
-}
-
-// ============================================================================
 // Property Tests
 // ============================================================================
 
 describe('Delta Sync Efficiency Property Tests', () => {
-  let mockSend: ReturnType<typeof vi.fn>;
-  let mockLambdaClient: LambdaClient;
   let consoleLogSpy: ReturnType<typeof vi.spyOn>;
   let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
-    mockSend = vi.fn();
-    mockLambdaClient = { send: mockSend } as unknown as LambdaClient;
-    clearLambdaClient();
-    setLambdaClient(mockLambdaClient);
+    vi.clearAllMocks();
     consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
   afterEach(() => {
-    clearLambdaClient();
     consoleLogSpy.mockRestore();
     consoleErrorSpy.mockRestore();
     vi.clearAllMocks();
@@ -162,10 +167,10 @@ describe('Delta Sync Efficiency Property Tests', () => {
       await fc.assert(
         fc.asyncProperty(actorIdArb, noOpSyncResponseArb, async (actorId, mockResponse) => {
           // Reset mocks for this iteration
-          mockSend.mockReset();
+          mockFetch.mockReset();
 
           // Configure mock to return no-op response (marker equals HEAD)
-          mockSend.mockResolvedValueOnce(createMockLambdaResponse(mockResponse));
+          mockFetch.mockResolvedValueOnce(createMockResponse(mockResponse));
 
           const request: SyncAllRequest = {
             operation: 'sync_all',
@@ -175,63 +180,27 @@ describe('Delta Sync Efficiency Property Tests', () => {
           const result = await invokeSyncAll(testConfig, request);
 
           // Verify no operations were performed
-          return (
-            result.success === true &&
-            result.itemsSynced === 0 &&
-            result.itemsDeleted === 0
-          );
+          return result.success === true && result.itemsSynced === 0 && result.itemsDeleted === 0;
         }),
         { numRuns: 100 }
       );
     });
 
     /**
-     * Property 4.2: Sync all invocation uses RequestResponse type
-     *
-     * For any sync_all operation, the Lambda SHALL be invoked synchronously
-     * (RequestResponse) to wait for the result.
-     *
-     * **Validates: Requirements 2.1, 2.6**
-     */
-    it('sync all invocation uses RequestResponse type', async () => {
-      await fc.assert(
-        fc.asyncProperty(actorIdArb, deltaSyncResponseArb, async (actorId, mockResponse) => {
-          // Reset mocks for this iteration
-          mockSend.mockReset();
-
-          mockSend.mockResolvedValueOnce(createMockLambdaResponse(mockResponse));
-
-          const request: SyncAllRequest = {
-            operation: 'sync_all',
-            actorId,
-          };
-
-          await invokeSyncAll(testConfig, request);
-
-          // Verify Lambda was invoked with RequestResponse type
-          expect(mockSend).toHaveBeenCalledTimes(1);
-          const invokeCommand = mockSend.mock.calls[0][0];
-          return invokeCommand.input.InvocationType === 'RequestResponse';
-        }),
-        { numRuns: 50 }
-      );
-    });
-
-    /**
-     * Property 4.3: Delta sync returns correct counts from Lambda response
+     * Property 4.2: Delta sync returns correct counts from response
      *
      * For any delta sync operation, the returned counts SHALL match
-     * the Lambda response values.
+     * the response values.
      *
      * **Validates: Requirements 2.3, 2.6**
      */
-    it('delta sync returns correct counts from Lambda response', async () => {
+    it('delta sync returns correct counts from response', async () => {
       await fc.assert(
         fc.asyncProperty(actorIdArb, deltaSyncResponseArb, async (actorId, mockResponse) => {
           // Reset mocks for this iteration
-          mockSend.mockReset();
+          mockFetch.mockReset();
 
-          mockSend.mockResolvedValueOnce(createMockLambdaResponse(mockResponse));
+          mockFetch.mockResolvedValueOnce(createMockResponse(mockResponse));
 
           const request: SyncAllRequest = {
             operation: 'sync_all',
@@ -252,10 +221,10 @@ describe('Delta Sync Efficiency Property Tests', () => {
     });
 
     /**
-     * Property 4.4: Sync request includes correct operation type
+     * Property 4.3: Sync request includes correct operation type
      *
-     * For any sync_all request, the Lambda payload SHALL include
-     * operation: 'sync_all' and the correct actor_id.
+     * For any sync_all request, the payload SHALL include
+     * sync_operation: 'sync_all' and the correct actor_id.
      *
      * **Validates: Requirements 2.1**
      */
@@ -263,9 +232,9 @@ describe('Delta Sync Efficiency Property Tests', () => {
       await fc.assert(
         fc.asyncProperty(actorIdArb, noOpSyncResponseArb, async (actorId, mockResponse) => {
           // Reset mocks for this iteration
-          mockSend.mockReset();
+          mockFetch.mockReset();
 
-          mockSend.mockResolvedValueOnce(createMockLambdaResponse(mockResponse));
+          mockFetch.mockResolvedValueOnce(createMockResponse(mockResponse));
 
           const request: SyncAllRequest = {
             operation: 'sync_all',
@@ -275,165 +244,72 @@ describe('Delta Sync Efficiency Property Tests', () => {
           await invokeSyncAll(testConfig, request);
 
           // Verify payload contains correct fields
-          expect(mockSend).toHaveBeenCalledTimes(1);
-          const invokeCommand = mockSend.mock.calls[0][0];
-          const payload = JSON.parse(new TextDecoder().decode(invokeCommand.input.Payload));
+          expect(mockFetch).toHaveBeenCalledTimes(1);
+          const call = mockFetch.mock.calls[0];
+          const payload = JSON.parse(call[1].body as string);
 
-          return (
-            payload.operation === 'sync_all' &&
-            payload.actor_id === actorId
-          );
+          return payload.sync_operation === 'sync_all' && payload.actor_id === actorId;
         }),
         { numRuns: 50 }
       );
     });
 
     /**
-     * Property 4.5: Force full sync flag is passed correctly
+     * Property 4.4: Force full sync flag is passed correctly
      *
      * When forceFullSync is specified, it SHALL be included in the
-     * Lambda payload as force_full_sync.
+     * payload as force_full_sync.
      *
      * **Validates: Requirements 2.3**
      */
     it('force full sync flag is passed correctly', async () => {
       await fc.assert(
-        fc.asyncProperty(
-          actorIdArb,
-          fc.boolean(),
-          deltaSyncResponseArb,
-          async (actorId, forceFullSync, mockResponse) => {
-            // Reset mocks for this iteration
-            mockSend.mockReset();
+        fc.asyncProperty(actorIdArb, fc.boolean(), deltaSyncResponseArb, async (actorId, forceFullSync, mockResponse) => {
+          // Reset mocks for this iteration
+          mockFetch.mockReset();
 
-            mockSend.mockResolvedValueOnce(createMockLambdaResponse(mockResponse));
+          mockFetch.mockResolvedValueOnce(createMockResponse(mockResponse));
 
-            const request: SyncAllRequest = {
-              operation: 'sync_all',
-              actorId,
-              forceFullSync,
-            };
+          const request: SyncAllRequest = {
+            operation: 'sync_all',
+            actorId,
+            forceFullSync,
+          };
 
-            await invokeSyncAll(testConfig, request);
+          await invokeSyncAll(testConfig, request);
 
-            // Verify payload contains force_full_sync when specified
-            expect(mockSend).toHaveBeenCalledTimes(1);
-            const invokeCommand = mockSend.mock.calls[0][0];
-            const payload = JSON.parse(new TextDecoder().decode(invokeCommand.input.Payload));
+          // Verify payload contains force_full_sync when specified
+          expect(mockFetch).toHaveBeenCalledTimes(1);
+          const call = mockFetch.mock.calls[0];
+          const payload = JSON.parse(call[1].body as string);
 
-            // force_full_sync should be present when forceFullSync is true
-            if (forceFullSync) {
-              return payload.force_full_sync === true;
-            }
-            // When false, it may or may not be present (implementation detail)
-            return true;
+          // force_full_sync should be present when forceFullSync is true
+          if (forceFullSync) {
+            return payload.force_full_sync === true;
           }
-        ),
+          // When false, it may or may not be present (implementation detail)
+          return true;
+        }),
         { numRuns: 50 }
       );
     });
 
     /**
-     * Property 4.6: Lambda errors are handled gracefully
+     * Property 4.5: HTTP errors are handled gracefully
      *
-     * For any Lambda execution error, the sync SHALL return a failure
+     * For any HTTP error, the sync SHALL return a failure
      * response without throwing.
      *
      * **Validates: Requirements 2.6**
      */
-    it('Lambda errors are handled gracefully', async () => {
+    it('HTTP errors are handled gracefully', async () => {
       await fc.assert(
-        fc.asyncProperty(
-          actorIdArb,
-          fc.string({ minLength: 5, maxLength: 100 }),
-          async (actorId, errorMessage) => {
-            // Reset mocks for this iteration
-            mockSend.mockReset();
-
-            // Configure mock to return a function error
-            mockSend.mockResolvedValueOnce({
-              FunctionError: 'Unhandled',
-              Payload: new TextEncoder().encode(JSON.stringify({ errorMessage })),
-            });
-
-            const request: SyncAllRequest = {
-              operation: 'sync_all',
-              actorId,
-            };
-
-            const result = await invokeSyncAll(testConfig, request);
-
-            // Should return failure without throwing
-            return (
-              result.success === false &&
-              result.itemsSynced === 0 &&
-              result.itemsDeleted === 0 &&
-              result.error !== undefined
-            );
-          }
-        ),
-        { numRuns: 50 }
-      );
-    });
-
-    /**
-     * Property 4.7: Network errors are handled gracefully
-     *
-     * For any network error during Lambda invocation, the sync SHALL
-     * return a failure response without throwing.
-     *
-     * **Validates: Requirements 2.6**
-     */
-    it('network errors are handled gracefully', async () => {
-      await fc.assert(
-        fc.asyncProperty(
-          actorIdArb,
-          fc.string({ minLength: 5, maxLength: 100 }),
-          async (actorId, errorMessage) => {
-            // Reset mocks for this iteration
-            mockSend.mockReset();
-
-            // Configure mock to reject with network error
-            mockSend.mockRejectedValueOnce(new Error(errorMessage));
-
-            const request: SyncAllRequest = {
-              operation: 'sync_all',
-              actorId,
-            };
-
-            const result = await invokeSyncAll(testConfig, request);
-
-            // Should return failure without throwing
-            return (
-              result.success === false &&
-              result.itemsSynced === 0 &&
-              result.itemsDeleted === 0 &&
-              result.error !== undefined
-            );
-          }
-        ),
-        { numRuns: 50 }
-      );
-    });
-
-    /**
-     * Property 4.8: Empty payload response is handled
-     *
-     * For any Lambda response with empty payload, the sync SHALL
-     * return a failure response.
-     *
-     * **Validates: Requirements 2.6**
-     */
-    it('empty payload response is handled', async () => {
-      await fc.assert(
-        fc.asyncProperty(actorIdArb, async (actorId) => {
+        fc.asyncProperty(actorIdArb, fc.string({ minLength: 5, maxLength: 100 }), async (actorId, errorMessage) => {
           // Reset mocks for this iteration
-          mockSend.mockReset();
+          mockFetch.mockReset();
 
-          // Configure mock to return empty payload
-          mockSend.mockResolvedValueOnce({
-            Payload: undefined,
-          });
+          // Configure mock to return an HTTP error
+          mockFetch.mockResolvedValueOnce(createMockResponse({ error: errorMessage }, false, 500));
 
           const request: SyncAllRequest = {
             operation: 'sync_all',
@@ -442,13 +318,45 @@ describe('Delta Sync Efficiency Property Tests', () => {
 
           const result = await invokeSyncAll(testConfig, request);
 
-          // Should return failure for empty payload
+          // Should return failure without throwing
           return (
-            result.success === false &&
-            result.error !== undefined
+            result.success === false && result.itemsSynced === 0 && result.itemsDeleted === 0 && result.error !== undefined
           );
         }),
-        { numRuns: 20 }
+        { numRuns: 50 }
+      );
+    });
+
+    /**
+     * Property 4.6: Network errors are handled gracefully
+     *
+     * For any network error during invocation, the sync SHALL
+     * return a failure response without throwing.
+     *
+     * **Validates: Requirements 2.6**
+     */
+    it('network errors are handled gracefully', async () => {
+      await fc.assert(
+        fc.asyncProperty(actorIdArb, fc.string({ minLength: 5, maxLength: 100 }), async (actorId, errorMessage) => {
+          // Reset mocks for this iteration
+          mockFetch.mockReset();
+
+          // Configure mock to reject with network error
+          mockFetch.mockRejectedValueOnce(new Error(errorMessage));
+
+          const request: SyncAllRequest = {
+            operation: 'sync_all',
+            actorId,
+          };
+
+          const result = await invokeSyncAll(testConfig, request);
+
+          // Should return failure without throwing
+          return (
+            result.success === false && result.itemsSynced === 0 && result.itemsDeleted === 0 && result.error !== undefined
+          );
+        }),
+        { numRuns: 50 }
       );
     });
   });
@@ -462,8 +370,8 @@ describe('Delta Sync Efficiency Property Tests', () => {
      * Sync with zero items synced and zero deleted is valid success
      */
     it('sync with zero items is valid success (already synced)', async () => {
-      mockSend.mockResolvedValueOnce(
-        createMockLambdaResponse({
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse({
           success: true,
           items_synced: 0,
           items_deleted: 0,
@@ -486,8 +394,8 @@ describe('Delta Sync Efficiency Property Tests', () => {
      * Sync with only deletions is valid
      */
     it('sync with only deletions is valid', async () => {
-      mockSend.mockResolvedValueOnce(
-        createMockLambdaResponse({
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse({
           success: true,
           items_synced: 0,
           items_deleted: 5,
@@ -509,8 +417,8 @@ describe('Delta Sync Efficiency Property Tests', () => {
      * Sync with large number of items
      */
     it('sync with large number of items', async () => {
-      mockSend.mockResolvedValueOnce(
-        createMockLambdaResponse({
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse({
           success: true,
           items_synced: 1000,
           items_deleted: 50,
@@ -532,9 +440,12 @@ describe('Delta Sync Efficiency Property Tests', () => {
      * Malformed JSON response is handled
      */
     it('malformed JSON response is handled', async () => {
-      mockSend.mockResolvedValueOnce({
-        Payload: new TextEncoder().encode('not valid json'),
-      });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve('not valid json'),
+        headers: new Headers(),
+      } as Response);
 
       const result = await invokeSyncAll(testConfig, {
         operation: 'sync_all',

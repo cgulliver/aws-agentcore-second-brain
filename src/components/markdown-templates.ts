@@ -39,6 +39,8 @@ export interface FrontMatter {
   id: string;           // SB_ID (e.g., "sb-a7f3c2d")
   type: 'idea' | 'decision' | 'project';
   title: string;        // Human-readable title
+  summary?: string;     // One-line description for LLM context
+  parent?: string;      // Parent item wikilink (e.g., "[[sb-1234567]]")
   created_at: string;   // ISO-8601 timestamp
   updated_at?: string;  // ISO-8601 timestamp (set on fix/update)
   tags: string[];       // 2-4 extracted tags
@@ -112,8 +114,12 @@ export function shouldHaveFrontMatter(classification: Classification): boolean {
 }
 
 /**
- * Generate YAML front matter block
+ * Generate YAML front matter block (Obsidian-compatible format)
  * Validates: Requirements 2.1, 2.2, 2.3, 2.5
+ * 
+ * Uses Obsidian's preferred format:
+ * - Core fields in front matter (id, type, title, summary, parent, status, dates)
+ * - Tags and links go at bottom of note content (not in front matter)
  * 
  * @param frontMatter - The front matter data
  * @returns YAML string with --- delimiters
@@ -121,10 +127,34 @@ export function shouldHaveFrontMatter(classification: Classification): boolean {
 export function generateFrontMatter(frontMatter: FrontMatter): string {
   const lines: string[] = [];
   
+  // Helper to format a string value (quote if needed)
+  const formatValue = (value: string): string => {
+    if (value.includes('"') || value.includes(':') || value.includes('#') || value.includes('\n')) {
+      return `"${value.replace(/"/g, '\\"')}"`;
+    }
+    return value;
+  };
+  
   lines.push('---');
+  lines.push('');  // Blank line after opening ---
   lines.push(`id: ${frontMatter.id}`);
   lines.push(`type: ${frontMatter.type}`);
-  lines.push(`title: "${frontMatter.title.replace(/"/g, '\\"')}"`);
+  lines.push(`title: ${formatValue(frontMatter.title)}`);
+  lines.push(`alias: ${formatValue(frontMatter.title)}`);
+  
+  // Summary - one-line description for LLM context
+  if (frontMatter.summary) {
+    lines.push(`summary: ${formatValue(frontMatter.summary)}`);
+  } else {
+    lines.push('summary:');
+  }
+  
+  // Parent - link to parent item (e.g., project for a task/idea)
+  if (frontMatter.parent) {
+    lines.push(`parent: ${frontMatter.parent}`);
+  } else {
+    lines.push('parent:');
+  }
   
   // Add status for projects (default to 'active')
   if (frontMatter.type === 'project') {
@@ -138,7 +168,15 @@ export function generateFrontMatter(frontMatter: FrontMatter): string {
     lines.push(`updated_at: ${frontMatter.updated_at}`);
   }
   
-  if (frontMatter.tags.length > 0) {
+  // Add source metadata if present
+  if (frontMatter.source) {
+    lines.push('source:');
+    lines.push(`  channel: ${frontMatter.source.channel}`);
+    lines.push(`  message_ts: ${frontMatter.source.message_ts}`);
+  }
+  
+  // Tags in front matter (for machine-readable queries)
+  if (frontMatter.tags && frontMatter.tags.length > 0) {
     lines.push('tags:');
     for (const tag of frontMatter.tags) {
       lines.push(`  - ${tag}`);
@@ -147,8 +185,7 @@ export function generateFrontMatter(frontMatter: FrontMatter): string {
     lines.push('tags: []');
   }
   
-  // Add links if present and non-empty (cross-item linking)
-  // Validates: Requirements 3.1, 3.2, 3.5
+  // Links in front matter (for machine-readable graph queries)
   if (frontMatter.links && frontMatter.links.length > 0) {
     lines.push('links:');
     for (const link of frontMatter.links) {
@@ -156,17 +193,39 @@ export function generateFrontMatter(frontMatter: FrontMatter): string {
     }
   }
   
-  // Add source metadata if present
-  if (frontMatter.source) {
-    lines.push('source:');
-    lines.push(`  channel: ${frontMatter.source.channel}`);
-    lines.push(`  message_ts: "${frontMatter.source.message_ts}"`);
-  }
-  
+  lines.push('');  // Blank line before closing ---
   lines.push('---');
   lines.push('');
   
   return lines.join('\n');
+}
+
+/**
+ * Generate tags and links footer for bottom of note
+ * 
+ * @param tags - Array of tags (will be prefixed with #)
+ * @param links - Array of wikilinks
+ * @returns Footer string with --- separator, tags and links
+ */
+export function generateTagsAndLinksFooter(tags: string[], links?: string[]): string {
+  const lines: string[] = [];
+  
+  // Tags with # prefix
+  if (tags.length > 0) {
+    const hashTags = tags.map(t => `#${t}`).join(' ');
+    lines.push(`Tags: ${hashTags}`);
+  }
+  
+  // Links (wikilinks)
+  if (links && links.length > 0) {
+    lines.push(`Links: ${links.join(', ')}`);
+  }
+  
+  if (lines.length > 0) {
+    return '\n---\n' + lines.join('\n');
+  }
+  
+  return '';
 }
 
 /**

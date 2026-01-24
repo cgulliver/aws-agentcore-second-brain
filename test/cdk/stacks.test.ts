@@ -107,7 +107,7 @@ describe('22.2 Core Stack', () => {
       FunctionName: 'second-brain-worker',
       Runtime: 'nodejs20.x',
       Architectures: ['arm64'],
-      Timeout: 60,
+      Timeout: 120,
     });
   });
 

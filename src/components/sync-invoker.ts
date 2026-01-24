@@ -1,17 +1,15 @@
 /**
  * Sync Invoker
  *
- * Invokes the Python Sync Lambda for Memory operations.
- * Used by Worker Lambda after commits.
+ * Invokes sync operations via the AgentCore classifier.
+ * The classifier handles sync operations when payload contains sync_operation field.
  *
  * Validates: Requirements 1.1, 2.1, 3.1, 5.1
  */
 
-import {
-  LambdaClient,
-  InvokeCommand,
-  InvocationType,
-} from '@aws-sdk/client-lambda';
+import { SignatureV4 } from '@smithy/signature-v4';
+import { Sha256 } from '@aws-crypto/sha256-js';
+import { defaultProvider } from '@aws-sdk/credential-provider-node';
 
 // ============================================================================
 // Interfaces
@@ -60,8 +58,11 @@ export interface HealthReport {
 }
 
 export interface SyncInvokerConfig {
-  syncLambdaArn: string;
+  /** AgentCore Runtime ARN (classifier handles sync operations) */
+  agentRuntimeArn: string;
   region: string;
+  /** @deprecated Use agentRuntimeArn instead */
+  syncLambdaArn?: string;
 }
 
 // ============================================================================
@@ -69,10 +70,10 @@ export interface SyncInvokerConfig {
 // ============================================================================
 
 /**
- * Lambda payload format (snake_case for Python Lambda)
+ * Classifier payload format for sync operations
  */
-interface LambdaPayload {
-  operation: string;
+interface SyncPayload {
+  sync_operation: string;
   actor_id: string;
   item_path?: string;
   item_content?: string;
@@ -81,52 +82,22 @@ interface LambdaPayload {
 }
 
 /**
- * Lambda response format (snake_case from Python Lambda)
+ * Classifier response format for sync operations
  */
-interface LambdaResponse {
+interface ClassifierSyncResponse {
   success: boolean;
   items_synced: number;
   items_deleted: number;
-  error?: string;
+  error?: string | null;
   health_report?: {
-    codecommit_count: number;
-    memory_count: number;
-    in_sync: boolean;
-    last_sync_timestamp: string | null;
-    last_sync_commit_id: string | null;
-    missing_in_memory: string[];
-    extra_in_memory: string[];
-  };
-}
-
-// ============================================================================
-// Lambda Client Factory
-// ============================================================================
-
-let lambdaClient: LambdaClient | null = null;
-
-/**
- * Get or create Lambda client
- */
-function getLambdaClient(region: string): LambdaClient {
-  if (!lambdaClient) {
-    lambdaClient = new LambdaClient({ region });
-  }
-  return lambdaClient;
-}
-
-/**
- * Clear Lambda client (for testing)
- */
-export function clearLambdaClient(): void {
-  lambdaClient = null;
-}
-
-/**
- * Set Lambda client (for testing)
- */
-export function setLambdaClient(client: LambdaClient): void {
-  lambdaClient = client;
+    codecommitCount: number;
+    memoryCount: number;
+    inSync: boolean;
+    lastSyncTimestamp: string | null;
+    lastSyncCommitId: string | null;
+    missingInMemory: string[];
+    extraInMemory: string[];
+  } | null;
 }
 
 // ============================================================================
@@ -134,13 +105,13 @@ export function setLambdaClient(client: LambdaClient): void {
 // ============================================================================
 
 /**
- * Convert camelCase request to snake_case payload for Python Lambda
+ * Convert request to classifier payload format
  */
-function toSnakeCasePayload(
+function toSyncPayload(
   request: SyncItemRequest | DeleteItemRequest | SyncAllRequest | HealthCheckRequest
-): LambdaPayload {
-  const payload: LambdaPayload = {
-    operation: request.operation,
+): SyncPayload {
+  const payload: SyncPayload = {
+    sync_operation: request.operation,
     actor_id: request.actorId,
   };
 
@@ -161,9 +132,9 @@ function toSnakeCasePayload(
 }
 
 /**
- * Convert snake_case response to camelCase SyncResponse
+ * Convert classifier response to SyncResponse
  */
-function toCamelCaseResponse(response: LambdaResponse): SyncResponse {
+function toSyncResponse(response: ClassifierSyncResponse): SyncResponse {
   const result: SyncResponse = {
     success: response.success,
     itemsSynced: response.items_synced,
@@ -175,31 +146,87 @@ function toCamelCaseResponse(response: LambdaResponse): SyncResponse {
   }
 
   if (response.health_report) {
-    result.healthReport = {
-      codecommitCount: response.health_report.codecommit_count,
-      memoryCount: response.health_report.memory_count,
-      inSync: response.health_report.in_sync,
-      lastSyncTimestamp: response.health_report.last_sync_timestamp,
-      lastSyncCommitId: response.health_report.last_sync_commit_id,
-      missingInMemory: response.health_report.missing_in_memory,
-      extraInMemory: response.health_report.extra_in_memory,
-    };
+    result.healthReport = response.health_report;
   }
 
   return result;
 }
 
 /**
- * Parse Lambda response payload
+ * Invoke AgentCore classifier with sync operation payload
  */
-function parseLambdaResponse(payload: Uint8Array | undefined): LambdaResponse {
-  if (!payload) {
-    throw new Error('Empty response from Lambda');
-  }
+async function invokeClassifierSync(
+  config: SyncInvokerConfig,
+  payload: SyncPayload,
+  waitForResponse: boolean
+): Promise<SyncResponse> {
+  const region = config.region;
+  const endpoint = `https://bedrock-agentcore.${region}.amazonaws.com`;
+  const encodedArn = encodeURIComponent(config.agentRuntimeArn);
+  const path = `/runtimes/${encodedArn}/invocations`;
+  const url = `${endpoint}${path}`;
 
-  const responseText = new TextDecoder().decode(payload);
-  const response = JSON.parse(responseText) as LambdaResponse;
-  return response;
+  try {
+    const signer = new SignatureV4({
+      credentials: defaultProvider(),
+      region,
+      service: 'bedrock-agentcore',
+      sha256: Sha256,
+    });
+
+    const body = JSON.stringify(payload);
+
+    const signedRequest = await signer.sign({
+      method: 'POST',
+      protocol: 'https:',
+      hostname: `bedrock-agentcore.${region}.amazonaws.com`,
+      path,
+      query: {},
+      headers: {
+        'Content-Type': 'application/json',
+        host: `bedrock-agentcore.${region}.amazonaws.com`,
+      },
+      body,
+    });
+
+    // For fire-and-forget operations, we still need to wait for the response
+    // since AgentCore doesn't support async invocation like Lambda
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: signedRequest.headers as Record<string, string>,
+      body,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('Sync operation failed', {
+        status: response.status,
+        error: errorText.substring(0, 200),
+      });
+      return {
+        success: false,
+        itemsSynced: 0,
+        itemsDeleted: 0,
+        error: `AgentCore error: ${response.status}`,
+      };
+    }
+
+    const responseText = await response.text();
+    const parsedResponse = JSON.parse(responseText) as ClassifierSyncResponse;
+
+    return toSyncResponse(parsedResponse);
+  } catch (error) {
+    console.error('Failed to invoke sync operation', {
+      error: error instanceof Error ? error.message : 'Unknown error',
+      operation: payload.sync_operation,
+    });
+    return {
+      success: false,
+      itemsSynced: 0,
+      itemsDeleted: 0,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
 }
 
 // ============================================================================
@@ -207,8 +234,9 @@ function parseLambdaResponse(payload: Uint8Array | undefined): LambdaResponse {
 // ============================================================================
 
 /**
- * Invoke sync Lambda to sync a single item after commit.
- * Fire-and-forget - doesn't block the worker response.
+ * Invoke classifier to sync a single item after commit.
+ * Note: AgentCore doesn't support async invocation, so this waits for response
+ * but doesn't block the caller (errors are logged but not thrown).
  *
  * Validates: Requirements 1.1, 1.3
  */
@@ -216,24 +244,18 @@ export async function invokeSyncItem(
   config: SyncInvokerConfig,
   request: SyncItemRequest
 ): Promise<void> {
-  const client = getLambdaClient(config.region);
-  const payload = toSnakeCasePayload(request);
+  const payload = toSyncPayload(request);
 
   try {
-    const command = new InvokeCommand({
-      FunctionName: config.syncLambdaArn,
-      InvocationType: InvocationType.Event, // Async - fire and forget
-      Payload: new TextEncoder().encode(JSON.stringify(payload)),
-    });
-
-    await client.send(command);
-    console.log('Sync item invoked', {
+    const result = await invokeClassifierSync(config, payload, false);
+    console.log('Sync item completed', {
       operation: request.operation,
       itemPath: request.itemPath,
+      success: result.success,
     });
   } catch (error) {
-    // Log error but don't throw - fire and forget
-    console.error('Failed to invoke sync item', {
+    // Log error but don't throw - fire and forget semantics
+    console.error('Failed to sync item', {
       error: error instanceof Error ? error.message : 'Unknown error',
       itemPath: request.itemPath,
     });
@@ -241,8 +263,9 @@ export async function invokeSyncItem(
 }
 
 /**
- * Invoke sync Lambda to delete an item.
- * Fire-and-forget - doesn't block the worker response.
+ * Invoke classifier to delete an item.
+ * Note: AgentCore doesn't support async invocation, so this waits for response
+ * but doesn't block the caller (errors are logged but not thrown).
  *
  * Validates: Requirements 3.1, 3.2
  */
@@ -250,24 +273,18 @@ export async function invokeDeleteItem(
   config: SyncInvokerConfig,
   request: DeleteItemRequest
 ): Promise<void> {
-  const client = getLambdaClient(config.region);
-  const payload = toSnakeCasePayload(request);
+  const payload = toSyncPayload(request);
 
   try {
-    const command = new InvokeCommand({
-      FunctionName: config.syncLambdaArn,
-      InvocationType: InvocationType.Event, // Async - fire and forget
-      Payload: new TextEncoder().encode(JSON.stringify(payload)),
-    });
-
-    await client.send(command);
-    console.log('Delete item invoked', {
+    const result = await invokeClassifierSync(config, payload, false);
+    console.log('Delete item completed', {
       operation: request.operation,
       sbId: request.sbId,
+      success: result.success,
     });
   } catch (error) {
-    // Log error but don't throw - fire and forget
-    console.error('Failed to invoke delete item', {
+    // Log error but don't throw - fire and forget semantics
+    console.error('Failed to delete item', {
       error: error instanceof Error ? error.message : 'Unknown error',
       sbId: request.sbId,
     });
@@ -275,7 +292,7 @@ export async function invokeDeleteItem(
 }
 
 /**
- * Invoke sync Lambda for full bootstrap sync.
+ * Invoke classifier for full bootstrap sync.
  * Waits for response to report results.
  *
  * Validates: Requirements 2.1, 2.6
@@ -284,39 +301,15 @@ export async function invokeSyncAll(
   config: SyncInvokerConfig,
   request: SyncAllRequest
 ): Promise<SyncResponse> {
-  const client = getLambdaClient(config.region);
-  const payload = toSnakeCasePayload(request);
+  const payload = toSyncPayload(request);
 
   try {
-    const command = new InvokeCommand({
-      FunctionName: config.syncLambdaArn,
-      InvocationType: InvocationType.RequestResponse, // Sync - wait for response
-      Payload: new TextEncoder().encode(JSON.stringify(payload)),
-    });
-
-    const result = await client.send(command);
-
-    // Check for function error
-    if (result.FunctionError) {
-      const errorPayload = result.Payload
-        ? new TextDecoder().decode(result.Payload)
-        : 'Unknown error';
-      console.error('Sync all Lambda error', { error: errorPayload });
-      return {
-        success: false,
-        itemsSynced: 0,
-        itemsDeleted: 0,
-        error: 'Sync Lambda execution failed',
-      };
-    }
-
-    const response = parseLambdaResponse(result.Payload);
+    const result = await invokeClassifierSync(config, payload, true);
     console.log('Sync all completed', {
-      success: response.success,
-      itemsSynced: response.items_synced,
+      success: result.success,
+      itemsSynced: result.itemsSynced,
     });
-
-    return toCamelCaseResponse(response);
+    return result;
   } catch (error) {
     console.error('Failed to invoke sync all', {
       error: error instanceof Error ? error.message : 'Unknown error',
@@ -331,7 +324,7 @@ export async function invokeSyncAll(
 }
 
 /**
- * Invoke sync Lambda for health check.
+ * Invoke classifier for health check.
  * Waits for response to report results.
  *
  * Validates: Requirements 5.1, 5.2, 5.3, 5.4, 5.5
@@ -340,39 +333,15 @@ export async function invokeHealthCheck(
   config: SyncInvokerConfig,
   request: HealthCheckRequest
 ): Promise<SyncResponse> {
-  const client = getLambdaClient(config.region);
-  const payload = toSnakeCasePayload(request);
+  const payload = toSyncPayload(request);
 
   try {
-    const command = new InvokeCommand({
-      FunctionName: config.syncLambdaArn,
-      InvocationType: InvocationType.RequestResponse, // Sync - wait for response
-      Payload: new TextEncoder().encode(JSON.stringify(payload)),
-    });
-
-    const result = await client.send(command);
-
-    // Check for function error
-    if (result.FunctionError) {
-      const errorPayload = result.Payload
-        ? new TextDecoder().decode(result.Payload)
-        : 'Unknown error';
-      console.error('Health check Lambda error', { error: errorPayload });
-      return {
-        success: false,
-        itemsSynced: 0,
-        itemsDeleted: 0,
-        error: 'Health check Lambda execution failed',
-      };
-    }
-
-    const response = parseLambdaResponse(result.Payload);
+    const result = await invokeClassifierSync(config, payload, true);
     console.log('Health check completed', {
-      success: response.success,
-      inSync: response.health_report?.in_sync,
+      success: result.success,
+      inSync: result.healthReport?.inSync,
     });
-
-    return toCamelCaseResponse(response);
+    return result;
   } catch (error) {
     console.error('Failed to invoke health check', {
       error: error instanceof Error ? error.message : 'Unknown error',
@@ -384,4 +353,24 @@ export async function invokeHealthCheck(
       error: error instanceof Error ? error.message : 'Unknown error',
     };
   }
+}
+
+// ============================================================================
+// Testing Utilities
+// ============================================================================
+
+/**
+ * Clear any cached state (for testing)
+ * @deprecated No longer needed - AgentCore client doesn't cache
+ */
+export function clearLambdaClient(): void {
+  // No-op - kept for backward compatibility
+}
+
+/**
+ * Set mock client (for testing)
+ * @deprecated Use dependency injection instead
+ */
+export function setLambdaClient(_client: unknown): void {
+  // No-op - kept for backward compatibility
 }

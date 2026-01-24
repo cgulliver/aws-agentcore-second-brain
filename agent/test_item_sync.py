@@ -259,6 +259,47 @@ class TestFrontMatterParsing:
         content = "---\nid: invalid\ntitle: Test\ntype: idea\n---\n"
         assert sync.extract_item_metadata("10-ideas/test.md", content) is None
 
+    def test_obsidian_format_with_blank_lines(self):
+        """Verify parsing works with Obsidian-compatible format (blank lines around delimiters)."""
+        from item_sync import ItemSyncModule
+        
+        sync = ItemSyncModule(memory_id='test-memory', region='us-east-1')
+        
+        # Obsidian format: blank line after opening --- and before closing ---
+        content = """---
+
+id: sb-1234567
+type: project
+title: Test Project
+alias: Test Project
+summary:
+parent:
+status: active
+created_at: 2026-01-19T22:41:23.238Z
+tags: []
+
+---
+
+# Test Project
+
+Content here.
+"""
+        
+        # Should parse successfully
+        front_matter = sync.parse_front_matter(content)
+        assert front_matter is not None, "Obsidian format should parse successfully"
+        assert front_matter.get('id') == 'sb-1234567'
+        assert front_matter.get('type') == 'project'
+        assert front_matter.get('title') == 'Test Project'
+        assert front_matter.get('status') == 'active'
+        
+        # Should extract metadata successfully
+        metadata = sync.extract_item_metadata("30-projects/test.md", content)
+        assert metadata is not None, "Should extract metadata from Obsidian format"
+        assert metadata.sb_id == 'sb-1234567'
+        assert metadata.title == 'Test Project'
+        assert metadata.item_type == 'project'
+        assert metadata.status == 'active'
 
 
 class TestChangedFilesProcessing:

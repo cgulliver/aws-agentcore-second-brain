@@ -77,6 +77,8 @@ export interface ActionPlan {
   confidence: number;
   reasoning: string;
   title: string;
+  summary?: string;  // One-line description for front matter (LLM-generated)
+  tags?: string[];   // 2-4 contextual tags (LLM-generated)
   content: string;
   suggested_slug?: string;
   file_operations: FileOperation[];

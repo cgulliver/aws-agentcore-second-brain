@@ -257,6 +257,8 @@ Message: "Idea for project X: add feature Y"
   "confidence": 0.9,
   "reasoning": "User wants to capture an idea for an existing project",
   "title": "Add feature Y",
+  "summary": "Enhance project X with feature Y for improved functionality",
+  "tags": ["feature", "enhancement", "project-x"],
   "content": "# Add feature Y\n\n## Context\nEnhance the project with feature Y.\n\n---\nSource: Slack DM on 2026-01-21",
   "file_operations": [{
     "operation": "create",
@@ -392,6 +394,8 @@ Each item must include all required fields for its intent/classification.
 - `confidence`: Required. Float 0.0-1.0
 - `reasoning`: Required. 1-2 sentences
 - `title`: Required. Concise title
+- `summary`: Required for idea/decision/project. One sentence describing the item
+- `tags`: Required for idea/decision/project. 2-4 contextual keywords (lowercase, no # prefix)
 - `content`: Required. The generated Markdown content (NOT null)
 - `file_operations`: Required for inbox/idea/decision/project. Empty for task
 - `task_details`: Required for task only. Null for others
@@ -420,6 +424,8 @@ Single-item:
   "reasoning": "<1-2 sentences>",
 
   "title": "<string or null>",
+  "summary": "<one-line description for front matter>",
+  "tags": ["<tag1>", "<tag2>", "<tag3>"],
   "content": "<markdown body - REQUIRED for captures, null for query/status_update>",
 
   "file_operations": [
@@ -447,4 +453,6 @@ Rules:
 - For classification="task": file_operations MUST be [], task_details MUST be present
 - For non-task captures: task_details MUST be null
 - For captures (inbox/idea/decision/project): content MUST be a non-null string (the markdown body)
+- summary: One sentence describing the item (for front matter and LLM context)
+- tags: 2-4 contextual keywords (lowercase, no #prefix - worker adds #)
 

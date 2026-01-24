@@ -99,7 +99,6 @@ import {
 import {
   invokeSyncItem,
   invokeDeleteItem,
-  invokeSyncAll,
   invokeHealthCheck,
   type SyncInvokerConfig,
   type SyncResponse,
@@ -119,7 +118,6 @@ const CONVERSATION_TTL_PARAM = process.env.CONVERSATION_TTL_PARAM || '/second-br
 const SES_FROM_EMAIL = process.env.SES_FROM_EMAIL || 'noreply@example.com';
 const EMAIL_MODE = process.env.EMAIL_MODE || 'live';
 const AWS_REGION = process.env.AWS_REGION || 'us-east-1';
-const SYNC_LAMBDA_ARN = process.env.SYNC_LAMBDA_ARN || '';
 
 // Configuration objects
 const idempotencyConfig: IdempotencyConfig = {
@@ -157,9 +155,9 @@ const projectMatcherConfig: ProjectMatcherConfig = {
   maxCandidates: 3,
 };
 
-// Sync invoker configuration
+// Sync invoker configuration - uses AgentCore classifier for sync operations
 const syncConfig: SyncInvokerConfig = {
-  syncLambdaArn: SYNC_LAMBDA_ARN,
+  agentRuntimeArn: AGENT_RUNTIME_ARN,
   region: AWS_REGION,
 };
 
@@ -230,14 +228,7 @@ async function processMessage(message: SQSEventMessage): Promise<void> {
       return;
     }
 
-    // Step 2.5: Check for sync command
-    // Validates: Requirements 2.2
-    if (isSyncCommand(message_text)) {
-      await handleSyncCommand(event_id, slackContext);
-      return;
-    }
-
-    // Step 2.6: Check for health command
+    // Step 2.5: Check for health command
     // Validates: Requirements 5.1
     if (isHealthCommand(message_text)) {
       await handleHealthCommand(event_id, slackContext);
@@ -446,136 +437,12 @@ async function handleFixCommand(
 }
 
 /**
- * Check if message is a sync command (case-insensitive)
- * 
- * Validates: Requirements 2.2
- */
-function isSyncCommand(messageText: string): boolean {
-  return messageText.trim().toLowerCase() === 'sync';
-}
-
-/**
  * Check if message is a health command (case-insensitive)
  * 
  * Validates: Requirements 5.1
  */
 function isHealthCommand(messageText: string): boolean {
   return messageText.trim().toLowerCase() === 'health';
-}
-
-/**
- * Format sync result for Slack reply
- * 
- * Validates: Requirements 2.6
- */
-function formatSyncResultForSlack(result: SyncResponse): string {
-  if (result.success) {
-    const lines = [
-      '✅ Sync complete',
-      `• Items synced: ${result.itemsSynced}`,
-      `• Items deleted: ${result.itemsDeleted}`,
-    ];
-    return lines.join('\n');
-  } else {
-    return `❌ Sync failed\nError: ${result.error || 'Unknown error'}`;
-  }
-}
-
-/**
- * Handle sync command
- * 
- * Invokes the sync Lambda with sync_all operation and reports results.
- * 
- * Validates: Requirements 2.1, 2.2, 2.6
- */
-async function handleSyncCommand(
-  eventId: string,
-  slackContext: SlackContext
-): Promise<void> {
-  log('info', 'Processing sync command', { event_id: eventId });
-
-  await updateExecutionState(idempotencyConfig, eventId, { status: 'EXECUTING' });
-
-  try {
-    // Check if sync Lambda is configured
-    if (!SYNC_LAMBDA_ARN) {
-      await sendSlackReply(
-        { botTokenParam: BOT_TOKEN_PARAM },
-        {
-          channel: slackContext.channel_id,
-          text: formatErrorReply('Sync is not configured'),
-          thread_ts: slackContext.thread_ts,
-        }
-      );
-      await markFailed(idempotencyConfig, eventId, 'Sync Lambda not configured');
-      return;
-    }
-
-    // Invoke sync Lambda with sync_all operation
-    const result = await invokeSyncAll(syncConfig, {
-      operation: 'sync_all',
-      actorId: slackContext.user_id,
-    });
-
-    // Format and send Slack reply
-    const replyText = formatSyncResultForSlack(result);
-    await sendSlackReply(
-      { botTokenParam: BOT_TOKEN_PARAM },
-      {
-        channel: slackContext.channel_id,
-        text: replyText,
-        thread_ts: slackContext.thread_ts,
-      }
-    );
-
-    // Create receipt for sync operation
-    const receipt = createReceipt(
-      eventId,
-      slackContext,
-      'sync' as Classification, // Extended classification for sync
-      1.0,
-      [{ type: 'sync', status: result.success ? 'success' : 'failure', details: { itemsSynced: result.itemsSynced, itemsDeleted: result.itemsDeleted } }],
-      [],
-      null,
-      result.success ? `Sync complete: ${result.itemsSynced} items synced` : `Sync failed: ${result.error}`,
-      { syncResult: result }
-    );
-
-    await appendReceipt(knowledgeConfig, receipt);
-
-    if (result.success) {
-      await markCompleted(idempotencyConfig, eventId);
-      log('info', 'Sync command completed', {
-        event_id: eventId,
-        items_synced: result.itemsSynced,
-        items_deleted: result.itemsDeleted,
-      });
-    } else {
-      await markFailed(idempotencyConfig, eventId, result.error || 'Sync failed');
-      log('warn', 'Sync command failed', {
-        event_id: eventId,
-        error: result.error,
-      });
-    }
-
-  } catch (error) {
-    log('error', 'Sync command error', {
-      event_id: eventId,
-      error: error instanceof Error ? error.message : 'Unknown error',
-    });
-
-    await sendSlackReply(
-      { botTokenParam: BOT_TOKEN_PARAM },
-      {
-        channel: slackContext.channel_id,
-        text: formatErrorReply('Sync failed. Please try again.'),
-        thread_ts: slackContext.thread_ts,
-      }
-    );
-
-    await markFailed(idempotencyConfig, eventId, error instanceof Error ? error.message : 'Sync failed');
-    throw error;
-  }
 }
 
 /**
@@ -664,21 +531,21 @@ async function handleHealthCommand(
   await updateExecutionState(idempotencyConfig, eventId, { status: 'EXECUTING' });
 
   try {
-    // Check if sync Lambda is configured
-    if (!SYNC_LAMBDA_ARN) {
+    // Check if AgentCore Runtime is configured (health check uses the classifier)
+    if (!AGENT_RUNTIME_ARN) {
       await sendSlackReply(
         { botTokenParam: BOT_TOKEN_PARAM },
         {
           channel: slackContext.channel_id,
-          text: formatErrorReply('Health check is not configured'),
+          text: formatErrorReply('AgentCore Runtime not configured'),
           thread_ts: slackContext.thread_ts,
         }
       );
-      await markFailed(idempotencyConfig, eventId, 'Sync Lambda not configured');
+      await markFailed(idempotencyConfig, eventId, 'AgentCore Runtime not configured');
       return;
     }
 
-    // Invoke sync Lambda with health_check operation
+    // Invoke classifier with health_check operation
     const result = await invokeHealthCheck(syncConfig, {
       operation: 'health_check',
       actorId: slackContext.user_id,
@@ -843,7 +710,7 @@ async function handleReclassification(
 
       // Sync delete to Memory (fire-and-forget)
       // Validates: Requirements 3.1, 3.2
-      if (SYNC_LAMBDA_ARN) {
+      if (AGENT_RUNTIME_ARN) {
         // Extract sb_id from the deleted file path
         // Pattern: <folder>/<date>__<slug>__<sb_id>.md
         const sbIdMatch = filePath.match(/sb-[a-f0-9]{7}/);
@@ -1718,7 +1585,7 @@ async function executeAndFinalize(
   if (result.success) {
     // Sync item to Memory after successful commit (fire-and-forget)
     // Validates: Requirements 1.1, 1.5
-    if (SYNC_LAMBDA_ARN && result.filesModified?.length) {
+    if (AGENT_RUNTIME_ARN && result.filesModified?.length) {
       const filePath = result.filesModified[0];
       // Only sync ideas, decisions, and projects (not inbox or tasks)
       const syncableTypes = ['idea', 'decision', 'project'];
@@ -2080,7 +1947,7 @@ async function processSingleItem(
 
   // Sync item to Memory after successful commit (fire-and-forget)
   // Validates: Requirements 1.6
-  if (SYNC_LAMBDA_ARN && result.filesModified?.length) {
+  if (AGENT_RUNTIME_ARN && result.filesModified?.length) {
     const filePath = result.filesModified[0];
     // Only sync ideas, decisions, and projects (not inbox or tasks)
     const syncableTypes = ['idea', 'decision', 'project'];

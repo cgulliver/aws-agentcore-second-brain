@@ -1,7 +1,7 @@
 /**
  * Unit Tests for Sync Invoker
  *
- * Tests for Lambda invocation of sync operations.
+ * Tests for AgentCore classifier invocation of sync operations.
  * Validates: Requirements 1.4, 3.3
  */
 
@@ -11,28 +11,43 @@ import {
   invokeDeleteItem,
   invokeSyncAll,
   invokeHealthCheck,
-  clearLambdaClient,
-  setLambdaClient,
   type SyncItemRequest,
   type DeleteItemRequest,
   type SyncAllRequest,
   type HealthCheckRequest,
   type SyncInvokerConfig,
 } from '../../src/components/sync-invoker';
-import { LambdaClient, InvokeCommand, InvocationType } from '@aws-sdk/client-lambda';
 
 // ============================================================================
 // Mock Setup
 // ============================================================================
 
-// Mock Lambda client
-const mockSend = vi.fn();
-const mockLambdaClient = {
-  send: mockSend,
-} as unknown as LambdaClient;
+// Mock fetch globally
+const mockFetch = vi.fn();
+global.fetch = mockFetch;
+
+// Mock AWS signing (we don't need to test actual signing)
+vi.mock('@smithy/signature-v4', () => ({
+  SignatureV4: vi.fn().mockImplementation(() => ({
+    sign: vi.fn().mockResolvedValue({
+      headers: {
+        'Content-Type': 'application/json',
+        host: 'bedrock-agentcore.us-east-1.amazonaws.com',
+        authorization: 'mock-auth',
+      },
+    }),
+  })),
+}));
+
+vi.mock('@aws-sdk/credential-provider-node', () => ({
+  defaultProvider: vi.fn().mockReturnValue(() => Promise.resolve({
+    accessKeyId: 'mock-access-key',
+    secretAccessKey: 'mock-secret-key',
+  })),
+}));
 
 const testConfig: SyncInvokerConfig = {
-  syncLambdaArn: 'arn:aws:lambda:us-east-1:123456789012:function:SyncLambda',
+  agentRuntimeArn: 'arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/test-runtime',
   region: 'us-east-1',
 };
 
@@ -41,20 +56,24 @@ const testConfig: SyncInvokerConfig = {
 // ============================================================================
 
 /**
- * Create a mock Lambda response payload
+ * Create a mock fetch response
  */
-function createMockPayload(response: object): Uint8Array {
-  return new TextEncoder().encode(JSON.stringify(response));
+function createMockResponse(body: object, ok = true, status = 200): Response {
+  return {
+    ok,
+    status,
+    text: () => Promise.resolve(JSON.stringify(body)),
+    headers: new Headers(),
+  } as Response;
 }
 
 /**
- * Extract the payload from the InvokeCommand
+ * Extract the payload from the fetch call
  */
-function extractPayload(command: InvokeCommand): object {
-  const payloadBytes = command.input.Payload;
-  if (!payloadBytes) return {};
-  const payloadText = new TextDecoder().decode(payloadBytes as Uint8Array);
-  return JSON.parse(payloadText);
+function extractPayload(callIndex = 0): object {
+  const call = mockFetch.mock.calls[callIndex];
+  if (!call || !call[1]?.body) return {};
+  return JSON.parse(call[1].body as string);
 }
 
 // ============================================================================
@@ -64,12 +83,10 @@ function extractPayload(command: InvokeCommand): object {
 describe('Sync Invoker', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    clearLambdaClient();
-    setLambdaClient(mockLambdaClient);
   });
 
   afterEach(() => {
-    clearLambdaClient();
+    vi.clearAllMocks();
   });
 
   // ==========================================================================
@@ -80,63 +97,47 @@ describe('Sync Invoker', () => {
     const syncItemRequest: SyncItemRequest = {
       operation: 'sync_item',
       actorId: 'user-123',
-      itemPath: '10-ideas/2026-01-20__test-idea__sb-abc123.md',
+      itemPath: '10-ideas/2026-01-20__test-idea__sb-abc1234.md',
       itemContent: '---\ntitle: Test Idea\n---\nContent here',
     };
 
-    it('should invoke Lambda with async invocation type (Event)', async () => {
-      mockSend.mockResolvedValueOnce({});
+    it('should invoke AgentCore with sync_operation payload', async () => {
+      mockFetch.mockResolvedValueOnce(createMockResponse({
+        success: true,
+        items_synced: 1,
+        items_deleted: 0,
+      }));
 
       await invokeSyncItem(testConfig, syncItemRequest);
 
-      expect(mockSend).toHaveBeenCalledTimes(1);
-      const command = mockSend.mock.calls[0][0] as InvokeCommand;
-      expect(command.input.InvocationType).toBe(InvocationType.Event);
-    });
-
-    it('should convert camelCase to snake_case in payload', async () => {
-      mockSend.mockResolvedValueOnce({});
-
-      await invokeSyncItem(testConfig, syncItemRequest);
-
-      const command = mockSend.mock.calls[0][0] as InvokeCommand;
-      const payload = extractPayload(command);
-
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      const payload = extractPayload();
       expect(payload).toEqual({
-        operation: 'sync_item',
+        sync_operation: 'sync_item',
         actor_id: 'user-123',
-        item_path: '10-ideas/2026-01-20__test-idea__sb-abc123.md',
+        item_path: '10-ideas/2026-01-20__test-idea__sb-abc1234.md',
         item_content: '---\ntitle: Test Idea\n---\nContent here',
       });
     });
 
-    it('should use correct Lambda ARN', async () => {
-      mockSend.mockResolvedValueOnce({});
-
-      await invokeSyncItem(testConfig, syncItemRequest);
-
-      const command = mockSend.mock.calls[0][0] as InvokeCommand;
-      expect(command.input.FunctionName).toBe(testConfig.syncLambdaArn);
-    });
-
-    it('should not throw on Lambda error (fire-and-forget)', async () => {
-      mockSend.mockRejectedValueOnce(new Error('Lambda invocation failed'));
+    it('should not throw on AgentCore error (fire-and-forget)', async () => {
+      mockFetch.mockRejectedValueOnce(new Error('Network error'));
 
       // Should not throw
       await expect(invokeSyncItem(testConfig, syncItemRequest)).resolves.toBeUndefined();
     });
 
-    it('should log error on Lambda failure', async () => {
+    it('should log error on AgentCore failure', async () => {
       const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-      mockSend.mockRejectedValueOnce(new Error('Lambda invocation failed'));
+      mockFetch.mockRejectedValueOnce(new Error('Network error'));
 
       await invokeSyncItem(testConfig, syncItemRequest);
 
       expect(consoleSpy).toHaveBeenCalledWith(
-        'Failed to invoke sync item',
+        'Failed to invoke sync operation',
         expect.objectContaining({
-          error: 'Lambda invocation failed',
-          itemPath: syncItemRequest.itemPath,
+          error: 'Network error',
+          operation: 'sync_item',
         })
       );
       consoleSpy.mockRestore();
@@ -151,52 +152,45 @@ describe('Sync Invoker', () => {
     const deleteItemRequest: DeleteItemRequest = {
       operation: 'delete_item',
       actorId: 'user-123',
-      sbId: 'sb-abc123',
+      sbId: 'sb-abc1234',
     };
 
-    it('should invoke Lambda with async invocation type (Event)', async () => {
-      mockSend.mockResolvedValueOnce({});
+    it('should invoke AgentCore with delete_item payload', async () => {
+      mockFetch.mockResolvedValueOnce(createMockResponse({
+        success: true,
+        items_synced: 0,
+        items_deleted: 1,
+      }));
 
       await invokeDeleteItem(testConfig, deleteItemRequest);
 
-      expect(mockSend).toHaveBeenCalledTimes(1);
-      const command = mockSend.mock.calls[0][0] as InvokeCommand;
-      expect(command.input.InvocationType).toBe(InvocationType.Event);
-    });
-
-    it('should convert camelCase to snake_case in payload', async () => {
-      mockSend.mockResolvedValueOnce({});
-
-      await invokeDeleteItem(testConfig, deleteItemRequest);
-
-      const command = mockSend.mock.calls[0][0] as InvokeCommand;
-      const payload = extractPayload(command);
-
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      const payload = extractPayload();
       expect(payload).toEqual({
-        operation: 'delete_item',
+        sync_operation: 'delete_item',
         actor_id: 'user-123',
-        sb_id: 'sb-abc123',
+        sb_id: 'sb-abc1234',
       });
     });
 
-    it('should not throw on Lambda error (fire-and-forget)', async () => {
-      mockSend.mockRejectedValueOnce(new Error('Lambda invocation failed'));
+    it('should not throw on AgentCore error (fire-and-forget)', async () => {
+      mockFetch.mockRejectedValueOnce(new Error('Network error'));
 
       // Should not throw
       await expect(invokeDeleteItem(testConfig, deleteItemRequest)).resolves.toBeUndefined();
     });
 
-    it('should log error on Lambda failure', async () => {
+    it('should log error on AgentCore failure', async () => {
       const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-      mockSend.mockRejectedValueOnce(new Error('Lambda invocation failed'));
+      mockFetch.mockRejectedValueOnce(new Error('Network error'));
 
       await invokeDeleteItem(testConfig, deleteItemRequest);
 
       expect(consoleSpy).toHaveBeenCalledWith(
-        'Failed to invoke delete item',
+        'Failed to invoke sync operation',
         expect.objectContaining({
-          error: 'Lambda invocation failed',
-          sbId: deleteItemRequest.sbId,
+          error: 'Network error',
+          operation: 'delete_item',
         })
       );
       consoleSpy.mockRestore();
@@ -214,51 +208,30 @@ describe('Sync Invoker', () => {
       forceFullSync: true,
     };
 
-    it('should invoke Lambda with sync invocation type (RequestResponse)', async () => {
-      mockSend.mockResolvedValueOnce({
-        Payload: createMockPayload({
-          success: true,
-          items_synced: 5,
-          items_deleted: 0,
-        }),
-      });
+    it('should invoke AgentCore with sync_all payload', async () => {
+      mockFetch.mockResolvedValueOnce(createMockResponse({
+        success: true,
+        items_synced: 5,
+        items_deleted: 0,
+      }));
 
       await invokeSyncAll(testConfig, syncAllRequest);
 
-      expect(mockSend).toHaveBeenCalledTimes(1);
-      const command = mockSend.mock.calls[0][0] as InvokeCommand;
-      expect(command.input.InvocationType).toBe(InvocationType.RequestResponse);
-    });
-
-    it('should convert camelCase to snake_case in payload', async () => {
-      mockSend.mockResolvedValueOnce({
-        Payload: createMockPayload({
-          success: true,
-          items_synced: 5,
-          items_deleted: 0,
-        }),
-      });
-
-      await invokeSyncAll(testConfig, syncAllRequest);
-
-      const command = mockSend.mock.calls[0][0] as InvokeCommand;
-      const payload = extractPayload(command);
-
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      const payload = extractPayload();
       expect(payload).toEqual({
-        operation: 'sync_all',
+        sync_operation: 'sync_all',
         actor_id: 'user-123',
         force_full_sync: true,
       });
     });
 
-    it('should convert snake_case response to camelCase', async () => {
-      mockSend.mockResolvedValueOnce({
-        Payload: createMockPayload({
-          success: true,
-          items_synced: 5,
-          items_deleted: 2,
-        }),
-      });
+    it('should return sync response with correct fields', async () => {
+      mockFetch.mockResolvedValueOnce(createMockResponse({
+        success: true,
+        items_synced: 5,
+        items_deleted: 2,
+      }));
 
       const result = await invokeSyncAll(testConfig, syncAllRequest);
 
@@ -275,40 +248,37 @@ describe('Sync Invoker', () => {
         actorId: 'user-123',
       };
 
-      mockSend.mockResolvedValueOnce({
-        Payload: createMockPayload({
-          success: true,
-          items_synced: 3,
-          items_deleted: 0,
-        }),
-      });
+      mockFetch.mockResolvedValueOnce(createMockResponse({
+        success: true,
+        items_synced: 3,
+        items_deleted: 0,
+      }));
 
       await invokeSyncAll(testConfig, requestWithoutForce);
 
-      const command = mockSend.mock.calls[0][0] as InvokeCommand;
-      const payload = extractPayload(command);
-
+      const payload = extractPayload();
       // force_full_sync should not be present when undefined
       expect(payload).toEqual({
-        operation: 'sync_all',
+        sync_operation: 'sync_all',
         actor_id: 'user-123',
       });
     });
 
-    it('should return error response on Lambda function error', async () => {
-      mockSend.mockResolvedValueOnce({
-        FunctionError: 'Unhandled',
-        Payload: createMockPayload({ errorMessage: 'Something went wrong' }),
-      });
+    it('should return error response on HTTP error', async () => {
+      mockFetch.mockResolvedValueOnce(createMockResponse(
+        { error: 'Internal error' },
+        false,
+        500
+      ));
 
       const result = await invokeSyncAll(testConfig, syncAllRequest);
 
       expect(result.success).toBe(false);
-      expect(result.error).toBe('Sync Lambda execution failed');
+      expect(result.error).toContain('AgentCore error');
     });
 
-    it('should return error response on Lambda invocation failure', async () => {
-      mockSend.mockRejectedValueOnce(new Error('Network error'));
+    it('should return error response on network failure', async () => {
+      mockFetch.mockRejectedValueOnce(new Error('Network error'));
 
       const result = await invokeSyncAll(testConfig, syncAllRequest);
 
@@ -318,15 +288,13 @@ describe('Sync Invoker', () => {
       expect(result.itemsDeleted).toBe(0);
     });
 
-    it('should include error from Lambda response', async () => {
-      mockSend.mockResolvedValueOnce({
-        Payload: createMockPayload({
-          success: false,
-          items_synced: 0,
-          items_deleted: 0,
-          error: 'CodeCommit unavailable',
-        }),
-      });
+    it('should include error from response', async () => {
+      mockFetch.mockResolvedValueOnce(createMockResponse({
+        success: false,
+        items_synced: 0,
+        items_deleted: 0,
+        error: 'CodeCommit unavailable',
+      }));
 
       const result = await invokeSyncAll(testConfig, syncAllRequest);
 
@@ -345,77 +313,47 @@ describe('Sync Invoker', () => {
       actorId: 'user-123',
     };
 
-    it('should invoke Lambda with sync invocation type (RequestResponse)', async () => {
-      mockSend.mockResolvedValueOnce({
-        Payload: createMockPayload({
-          success: true,
-          items_synced: 0,
-          items_deleted: 0,
-          health_report: {
-            codecommit_count: 10,
-            memory_count: 10,
-            in_sync: true,
-            last_sync_timestamp: '2026-01-20T15:30:00Z',
-            last_sync_commit_id: 'abc1234',
-            missing_in_memory: [],
-            extra_in_memory: [],
-          },
-        }),
-      });
+    it('should invoke AgentCore with health_check payload', async () => {
+      mockFetch.mockResolvedValueOnce(createMockResponse({
+        success: true,
+        items_synced: 0,
+        items_deleted: 0,
+        health_report: {
+          codecommitCount: 10,
+          memoryCount: 10,
+          inSync: true,
+          lastSyncTimestamp: '2026-01-20T15:30:00Z',
+          lastSyncCommitId: 'abc1234',
+          missingInMemory: [],
+          extraInMemory: [],
+        },
+      }));
 
       await invokeHealthCheck(testConfig, healthCheckRequest);
 
-      expect(mockSend).toHaveBeenCalledTimes(1);
-      const command = mockSend.mock.calls[0][0] as InvokeCommand;
-      expect(command.input.InvocationType).toBe(InvocationType.RequestResponse);
-    });
-
-    it('should convert camelCase to snake_case in payload', async () => {
-      mockSend.mockResolvedValueOnce({
-        Payload: createMockPayload({
-          success: true,
-          items_synced: 0,
-          items_deleted: 0,
-          health_report: {
-            codecommit_count: 10,
-            memory_count: 10,
-            in_sync: true,
-            last_sync_timestamp: null,
-            last_sync_commit_id: null,
-            missing_in_memory: [],
-            extra_in_memory: [],
-          },
-        }),
-      });
-
-      await invokeHealthCheck(testConfig, healthCheckRequest);
-
-      const command = mockSend.mock.calls[0][0] as InvokeCommand;
-      const payload = extractPayload(command);
-
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      const payload = extractPayload();
       expect(payload).toEqual({
-        operation: 'health_check',
+        sync_operation: 'health_check',
         actor_id: 'user-123',
       });
     });
 
-    it('should convert snake_case health report to camelCase', async () => {
-      mockSend.mockResolvedValueOnce({
-        Payload: createMockPayload({
-          success: true,
-          items_synced: 0,
-          items_deleted: 0,
-          health_report: {
-            codecommit_count: 10,
-            memory_count: 8,
-            in_sync: false,
-            last_sync_timestamp: '2026-01-20T15:30:00Z',
-            last_sync_commit_id: 'abc1234',
-            missing_in_memory: ['sb-123', 'sb-456'],
-            extra_in_memory: ['sb-789'],
-          },
-        }),
-      });
+    it('should return health report with correct fields', async () => {
+      mockFetch.mockResolvedValueOnce(createMockResponse({
+        success: true,
+        items_synced: 0,
+        items_deleted: 0,
+        health_report: {
+          codecommitCount: 10,
+          memoryCount: 8,
+          inSync: false,
+          lastSyncTimestamp: '2026-01-20T15:30:00Z',
+          lastSyncCommitId: 'abc1234',
+          missingInMemory: ['sb-1234567', 'sb-2345678'],
+          extraInMemory: ['sb-3456789'],
+        },
+      }));
 
       const result = await invokeHealthCheck(testConfig, healthCheckRequest);
 
@@ -426,28 +364,26 @@ describe('Sync Invoker', () => {
         inSync: false,
         lastSyncTimestamp: '2026-01-20T15:30:00Z',
         lastSyncCommitId: 'abc1234',
-        missingInMemory: ['sb-123', 'sb-456'],
-        extraInMemory: ['sb-789'],
+        missingInMemory: ['sb-1234567', 'sb-2345678'],
+        extraInMemory: ['sb-3456789'],
       });
     });
 
     it('should handle null timestamps in health report', async () => {
-      mockSend.mockResolvedValueOnce({
-        Payload: createMockPayload({
-          success: true,
-          items_synced: 0,
-          items_deleted: 0,
-          health_report: {
-            codecommit_count: 5,
-            memory_count: 0,
-            in_sync: false,
-            last_sync_timestamp: null,
-            last_sync_commit_id: null,
-            missing_in_memory: ['sb-1', 'sb-2', 'sb-3', 'sb-4', 'sb-5'],
-            extra_in_memory: [],
-          },
-        }),
-      });
+      mockFetch.mockResolvedValueOnce(createMockResponse({
+        success: true,
+        items_synced: 0,
+        items_deleted: 0,
+        health_report: {
+          codecommitCount: 5,
+          memoryCount: 0,
+          inSync: false,
+          lastSyncTimestamp: null,
+          lastSyncCommitId: null,
+          missingInMemory: ['sb-1', 'sb-2', 'sb-3', 'sb-4', 'sb-5'],
+          extraInMemory: [],
+        },
+      }));
 
       const result = await invokeHealthCheck(testConfig, healthCheckRequest);
 
@@ -455,20 +391,21 @@ describe('Sync Invoker', () => {
       expect(result.healthReport?.lastSyncCommitId).toBeNull();
     });
 
-    it('should return error response on Lambda function error', async () => {
-      mockSend.mockResolvedValueOnce({
-        FunctionError: 'Unhandled',
-        Payload: createMockPayload({ errorMessage: 'Something went wrong' }),
-      });
+    it('should return error response on HTTP error', async () => {
+      mockFetch.mockResolvedValueOnce(createMockResponse(
+        { error: 'Internal error' },
+        false,
+        500
+      ));
 
       const result = await invokeHealthCheck(testConfig, healthCheckRequest);
 
       expect(result.success).toBe(false);
-      expect(result.error).toBe('Health check Lambda execution failed');
+      expect(result.error).toContain('AgentCore error');
     });
 
-    it('should return error response on Lambda invocation failure', async () => {
-      mockSend.mockRejectedValueOnce(new Error('Timeout'));
+    it('should return error response on network failure', async () => {
+      mockFetch.mockRejectedValueOnce(new Error('Timeout'));
 
       const result = await invokeHealthCheck(testConfig, healthCheckRequest);
 
@@ -477,22 +414,20 @@ describe('Sync Invoker', () => {
     });
 
     it('should handle in-sync state correctly', async () => {
-      mockSend.mockResolvedValueOnce({
-        Payload: createMockPayload({
-          success: true,
-          items_synced: 0,
-          items_deleted: 0,
-          health_report: {
-            codecommit_count: 10,
-            memory_count: 10,
-            in_sync: true,
-            last_sync_timestamp: '2026-01-20T15:30:00Z',
-            last_sync_commit_id: 'abc1234',
-            missing_in_memory: [],
-            extra_in_memory: [],
-          },
-        }),
-      });
+      mockFetch.mockResolvedValueOnce(createMockResponse({
+        success: true,
+        items_synced: 0,
+        items_deleted: 0,
+        health_report: {
+          codecommitCount: 10,
+          memoryCount: 10,
+          inSync: true,
+          lastSyncTimestamp: '2026-01-20T15:30:00Z',
+          lastSyncCommitId: 'abc1234',
+          missingInMemory: [],
+          extraInMemory: [],
+        },
+      }));
 
       const result = await invokeHealthCheck(testConfig, healthCheckRequest);
 
@@ -507,24 +442,13 @@ describe('Sync Invoker', () => {
   // ==========================================================================
 
   describe('Edge Cases', () => {
-    it('should handle empty payload response', async () => {
-      mockSend.mockResolvedValueOnce({
-        Payload: undefined,
-      });
-
-      const result = await invokeSyncAll(testConfig, {
-        operation: 'sync_all',
-        actorId: 'user-123',
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('Empty response');
-    });
-
     it('should handle malformed JSON response', async () => {
-      mockSend.mockResolvedValueOnce({
-        Payload: new TextEncoder().encode('not valid json'),
-      });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve('not valid json'),
+        headers: new Headers(),
+      } as Response);
 
       const result = await invokeSyncAll(testConfig, {
         operation: 'sync_all',
@@ -535,7 +459,7 @@ describe('Sync Invoker', () => {
     });
 
     it('should handle unknown error types', async () => {
-      mockSend.mockRejectedValueOnce('string error');
+      mockFetch.mockRejectedValueOnce('string error');
 
       const result = await invokeSyncAll(testConfig, {
         operation: 'sync_all',
