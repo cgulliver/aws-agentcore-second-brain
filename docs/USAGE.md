@@ -651,6 +651,22 @@ Receipts include:
 
 ## Tips and Tricks
 
+### Updating the System Prompt
+
+To update the system prompt and force Lambda to reload it:
+
+```bash
+# Edit system/agent-system-prompt.md, then:
+./scripts/update-prompt.sh
+```
+
+This safely:
+1. Pushes the prompt to the knowledge repo
+2. Increments DEPLOY_VERSION while preserving all other Lambda env vars
+3. Forces Lambda to reload the prompt on next invocation
+
+**Warning:** Never use `aws lambda update-function-configuration` directly to bump DEPLOY_VERSION - it replaces ALL environment variables and will break the Lambda.
+
 ### Quick Inbox Entry
 
 For rapid capture, just send short notes:
