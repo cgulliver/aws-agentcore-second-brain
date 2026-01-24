@@ -166,8 +166,8 @@ Ideas, decisions, and projects include:
 
 - **Smart Classification** - AI-powered categorization with confidence scoring
 - **Memory-Based Item Lookup** - AgentCore Memory provides item context for intelligent linking
-- **Memory-Repo Sync** - Automatic synchronization between CodeCommit and AgentCore Memory
-- **Sync Commands** - Manual sync (`sync`) and health check (`health`) via Slack
+- **Auto-Sync** - Items automatically sync to Memory after each capture
+- **Health Check** - Run `health` to verify Memory/CodeCommit consistency
 - **Clarification Flow** - Asks when uncertain, remembers context
 - **Fix Command** - Correct mistakes with `fix: change the title to...` or reclassify with `fix: this should be a task`
 - **Git-Backed Storage** - Full history, diffable, portable Markdown

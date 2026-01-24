@@ -500,7 +500,7 @@ function formatHealthReportForSlack(healthReport: HealthReport): string {
   // Suggestion to fix if out of sync
   if (!healthReport.inSync) {
     lines.push('');
-    lines.push('Run `sync` to fix discrepancies.');
+    lines.push('Items sync automatically after each capture.');
   }
 
   return lines.join('\n');
