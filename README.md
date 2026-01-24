@@ -2,7 +2,7 @@
 
 > A personal knowledge capture system that turns Slack DMs into organized notes, decisions, and tasks.
 
-[![Tests](https://img.shields.io/badge/tests-429%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-478%20passing-brightgreen)]()
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue)]()
 [![AWS CDK](https://img.shields.io/badge/AWS%20CDK-2.x-orange)]()
 [![License](https://img.shields.io/badge/license-MIT-green)]()
@@ -160,6 +160,8 @@ Ideas, decisions, and projects include:
 
 - **Smart Classification** - AI-powered categorization with confidence scoring
 - **Memory-Based Item Lookup** - AgentCore Memory provides item context for intelligent linking
+- **Memory-Repo Sync** - Automatic synchronization between CodeCommit and AgentCore Memory
+- **Sync Commands** - Manual sync (`sync`) and health check (`health`) via Slack
 - **Clarification Flow** - Asks when uncertain, remembers context
 - **Fix Command** - Correct mistakes with `fix: change the title to...` or reclassify with `fix: this should be a task`
 - **Git-Backed Storage** - Full history, diffable, portable Markdown
@@ -332,28 +334,39 @@ Note: The current implementation uses AWS CodeCommit for the knowledge repositor
 |-----|-------------|---------|
 | `senderEmail` | SES sender address | `noreply@example.com` |
 | `securityMode` | Ingress security mode | `mtls-hmac` |
-| `classifierModel` | Bedrock model for classification | `amazon.nova-lite-v1:0` |
+| `classifierModel` | Bedrock model for classification | `amazon.nova-micro-v1:0` |
+| `reasoningEffort` | Nova 2 extended thinking level | `disabled` |
 
 ### Model Selection
 
 The classifier model can be configured at deploy time for cost/capability tradeoffs:
 
 ```bash
-# Use default (Nova Lite - balanced)
+# Use default (Nova Micro - cheapest)
 npx cdk deploy SecondBrainCoreStack
 
-# Use Nova Micro (cheapest, fastest)
-npx cdk deploy SecondBrainCoreStack -c classifierModel=amazon.nova-micro-v1:0
+# Use Nova 2 Lite (best balance, supports extended thinking)
+npx cdk deploy SecondBrainCoreStack -c classifierModel=global.amazon.nova-2-lite-v1:0
 
-# Use Claude Haiku (best quality, higher cost)
+# Use Nova 2 Lite with reasoning enabled
+npx cdk deploy SecondBrainCoreStack -c classifierModel=global.amazon.nova-2-lite-v1:0 -c reasoningEffort=low
+
+# Use Claude Haiku (alternative high-quality option)
 npx cdk deploy SecondBrainCoreStack -c classifierModel=anthropic.claude-3-5-haiku-20241022-v1:0
 ```
 
 | Model | Model ID | Notes |
 |-------|----------|-------|
 | Nova Micro | `amazon.nova-micro-v1:0` | Fastest, lowest cost |
-| Nova Lite | `amazon.nova-lite-v1:0` | Default, good balance |
+| Nova Lite | `amazon.nova-lite-v1:0` | Good balance |
+| Nova 2 Lite | `global.amazon.nova-2-lite-v1:0` | Best balance, 1M context, extended thinking |
 | Claude 3.5 Haiku | `anthropic.claude-3-5-haiku-20241022-v1:0` | Higher capability, higher cost |
+
+**Nova 2 Lite Extended Thinking:** Enable step-by-step reasoning with `reasoningEffort`:
+- `disabled` (default) - Fast responses, no reasoning overhead
+- `low` - Light reasoning for simple decisions
+- `medium` - Balanced reasoning
+- `high` - Deep analysis for complex classification
 
 See [Bedrock pricing](https://aws.amazon.com/bedrock/pricing/) for current rates.
 
@@ -368,12 +381,12 @@ See [Bedrock pricing](https://aws.amazon.com/bedrock/pricing/) for current rates
 ### Run Tests
 
 ```bash
-npm test                          # All TypeScript tests (416)
+npm test                          # All TypeScript tests (478)
 npm test -- --run test/unit/      # Unit tests only
 npm test -- --run test/property/  # Property tests only
 
-# Python tests (20 property tests for item sync)
-cd agent && python -m pytest test_item_sync.py -v
+# Python tests (48 property tests for item sync and memory retrieval)
+cd agent && python -m pytest test_item_sync.py test_memory_first_retrieval.py -v
 ```
 
 ### Synthesize CDK
