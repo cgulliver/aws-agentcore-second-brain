@@ -41,7 +41,7 @@ echo "Parent commit: $PARENT_COMMIT"
 # Push prompt to knowledge repo
 echo ""
 echo "Pushing system prompt to CodeCommit..."
-aws codecommit put-file \
+PUSH_RESULT=$(aws codecommit put-file \
   --repository-name "$KNOWLEDGE_REPO" \
   --branch-name main \
   --file-content "fileb://$PROMPT_FILE" \
@@ -49,9 +49,13 @@ aws codecommit put-file \
   --commit-message "Update system prompt" \
   --parent-commit-id "$PARENT_COMMIT" \
   --query 'commitId' \
-  --output text
+  --output text 2>&1) || true
 
-echo "✓ System prompt updated in CodeCommit"
+if echo "$PUSH_RESULT" | grep -q "SameFileContentException"; then
+  echo "✓ System prompt unchanged (already up to date)"
+else
+  echo "✓ System prompt updated in CodeCommit"
+fi
 
 # Get current DEPLOY_VERSION
 echo ""
@@ -82,11 +86,13 @@ NEW_ENV=$(echo "$CURRENT_ENV" | jq --arg v "$NEW_VERSION" '.DEPLOY_VERSION = $v'
 # Update Lambda with the modified environment (preserves all vars)
 echo ""
 echo "Updating Lambda environment..."
+echo "{\"Variables\": $NEW_ENV}" > /tmp/lambda-env.json
 aws lambda update-function-configuration \
   --function-name "$FUNCTION_NAME" \
-  --environment "Variables=$NEW_ENV" \
+  --environment file:///tmp/lambda-env.json \
   --query 'Environment.Variables.DEPLOY_VERSION' \
   --output text > /dev/null
+rm -f /tmp/lambda-env.json
 
 echo "✓ DEPLOY_VERSION updated to $NEW_VERSION"
 
