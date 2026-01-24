@@ -71,6 +71,7 @@ Tags: test, integration
                 'requestIdentifier': test_sb_id,
                 'namespaces': [f'/items/{TEST_ACTOR_ID}'],
                 'content': {'text': test_content},
+                'timestamp': datetime.now(timezone.utc),  # Required by API
             }]
         )
         

@@ -495,6 +495,8 @@ class ItemSyncModule:
             return False
         
         try:
+            from datetime import datetime, timezone
+            
             # Format item as text for storage
             item_text = item.to_memory_text()
             
@@ -506,6 +508,7 @@ class ItemSyncModule:
                     'requestIdentifier': item.sb_id,
                     'namespaces': [f'/items/{actor_id}'],
                     'content': {'text': item_text},
+                    'timestamp': datetime.now(timezone.utc),  # Required by API
                 }]
             )
             
