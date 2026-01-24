@@ -104,6 +104,7 @@ B) query intent signals
 - phrases (show me, find, list, search, remind me)
 - question mark
 - help requests ("help", "what can I do", "how do I use this", "what can you do")
+- health check requests ("health", "status check", "diagnostics")
 
 **For help requests** (messages that are just "help" or asking about capabilities), DO NOT search the knowledge base. Instead, respond with a brief overview:
 ```json
@@ -122,6 +123,12 @@ B) query intent signals
   "cited_files": []
 }
 ```
+
+**For health check requests** ("health", "status check", "diagnostics"), analyze your item context and report:
+- Count of items by type (projects, ideas, decisions)
+- Projects by status (active, on-hold, complete, cancelled)
+- Any issues noticed (missing fields, etc.)
+Format as a concise status report in query_response.
 
 C) capture intent signals
 - declarative notes, FYI, "I need to", "todo", "I've decided", "idea:"
