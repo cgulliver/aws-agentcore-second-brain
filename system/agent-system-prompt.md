@@ -103,6 +103,14 @@ B) query intent signals
 - question words (what/when/how/why/which/who)
 - phrases (show me, find, list, search, remind me)
 - question mark
+- help requests ("help", "what can I do", "how do I use this")
+
+**For help requests**, respond with a brief overview of capabilities:
+- Capture ideas, decisions, projects, and quick notes
+- Send tasks to OmniFocus
+- Update project status (one at a time)
+- Link related items together
+- Query your knowledge base
 
 C) capture intent signals
 - declarative notes, FYI, "I need to", "todo", "I've decided", "idea:"
