@@ -723,10 +723,8 @@ async def invoke(payload=None):
             - file_operations: array of file operations
             Return only valid JSON."""
         
-        # STEP 1: Ensure Memory is initialized before classification
-        # If no sync marker exists, do full sync first (cold start scenario)
-        if ITEM_SYNC_AVAILABLE:
-            ensure_memory_initialized(user_id)
+        # Note: Items are synced to Memory immediately after each commit via worker
+        # No need for pre-classification sync - Memory should already be up to date
         
         # Fetch item context using Memory-first retrieval with CodeCommit fallback
         # Validates: Requirements 4.1, 4.2, 4.3
@@ -795,9 +793,8 @@ async def invoke(payload=None):
             # Include memory status in response
             memory_enabled = session_manager is not None
             
-            # Run delta sync after multi-item classification completes
-            if ITEM_SYNC_AVAILABLE:
-                run_delta_sync(user_id)
+            # Note: Items are synced to Memory immediately after commit via worker
+            # No need for post-classification sync here
             
             return {
                 "status": "success",
@@ -845,10 +842,8 @@ async def invoke(payload=None):
                 # Log but don't fail - Memory is optional
                 print(f"Warning: Failed to save to Memory: {e}")
         
-        # STEP 2: Run delta sync after classification completes
-        # This keeps Memory up-to-date without blocking the response
-        if ITEM_SYNC_AVAILABLE:
-            run_delta_sync(user_id)
+        # Note: Items are synced to Memory immediately after commit via worker
+        # No need for post-classification sync here
         
         return {
             "status": "success",
