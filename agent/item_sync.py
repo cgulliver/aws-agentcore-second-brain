@@ -300,9 +300,9 @@ class ItemSyncModule:
                 top_k=1,
             )
             
-            # Parse commit ID from response
-            if response and 'memories' in response and response['memories']:
-                memory = response['memories'][0]
+            # Response is a list of memory records
+            if response and len(response) > 0:
+                memory = response[0]
                 content = memory.get('content', '')
                 # Extract commit ID from "Last synced commit: <commit_id>"
                 match = re.search(r'Last synced commit: ([a-f0-9]+)', content)
@@ -765,8 +765,9 @@ class ItemSyncModule:
                 top_k=1,
             )
             
-            if response and 'memories' in response and response['memories']:
-                memory = response['memories'][0]
+            # Response is a list of memory records
+            if response and len(response) > 0:
+                memory = response[0]
                 content = memory.get('content', '')
                 
                 # Extract commit ID

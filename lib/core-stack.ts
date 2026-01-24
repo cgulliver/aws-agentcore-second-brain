@@ -613,7 +613,7 @@ export class CoreStack extends cdk.Stack {
         SES_FROM_EMAIL: senderEmail,
         EMAIL_MODE: 'live', // Production mode - emails sent to OmniFocus
         NODE_OPTIONS: '--enable-source-maps',
-        DEPLOY_VERSION: '67', // Sync operations moved to classifier
+        DEPLOY_VERSION: '69', // Fix retrieve_memories API response format
         // Note: Sync operations now use AgentCore classifier (AGENT_RUNTIME_ARN)
         // instead of separate sync Lambda
       },

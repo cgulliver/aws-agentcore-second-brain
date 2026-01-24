@@ -455,9 +455,9 @@ class TestIncrementalSyncSkip:
         sync._codecommit_client = mock_cc
         
         mock_memory = MagicMock()
-        mock_memory.retrieve_memories.return_value = {
-            'memories': [{'content': f'Last synced commit: {commit_id}'}]
-        }
+        mock_memory.retrieve_memories.return_value = [
+            {'content': f'Last synced commit: {commit_id}'}
+        ]
         sync._memory_client = mock_memory
         
         # Run sync
@@ -493,9 +493,9 @@ class TestIncrementalSyncSkip:
         sync._codecommit_client = mock_cc
         
         mock_memory = MagicMock()
-        mock_memory.retrieve_memories.return_value = {
-            'memories': [{'content': f'Last synced commit: {old_commit}'}]
-        }
+        mock_memory.retrieve_memories.return_value = [
+            {'content': f'Last synced commit: {old_commit}'}
+        ]
         sync._memory_client = mock_memory
         
         # Run sync
@@ -521,7 +521,7 @@ class TestIncrementalSyncSkip:
         sync._codecommit_client = mock_cc
         
         mock_memory = MagicMock()
-        mock_memory.retrieve_memories.return_value = {'memories': []}  # No marker
+        mock_memory.retrieve_memories.return_value = []  # No marker
         sync._memory_client = mock_memory
         
         # Run sync
@@ -617,7 +617,7 @@ class TestGracefulDegradation:
         sync._codecommit_client = mock_cc
         
         mock_memory = MagicMock()
-        mock_memory.retrieve_memories.return_value = {'memories': []}
+        mock_memory.retrieve_memories.return_value = []
         sync._memory_client = mock_memory
         
         # Should not raise exception for any actor_id
