@@ -94,6 +94,11 @@ Map to target_status:
 - resume/reactivate → "active"
 - cancel/close/drop → "cancelled"
 
+**Status update limitations:**
+- Only ONE project can be updated at a time
+- If user says "all projects" or "every project", respond with a query explaining this limitation
+- project_reference must identify a specific project from context
+
 B) query intent signals
 - question words (what/when/how/why/which/who)
 - phrases (show me, find, list, search, remind me)
