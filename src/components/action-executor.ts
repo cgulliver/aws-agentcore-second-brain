@@ -402,8 +402,17 @@ async function addBacklinks(
   newItemType?: string,
   newItemTitle?: string
 ): Promise<void> {
+  console.log('addBacklinks called', {
+    newItemSbId,
+    linkedItemsCount: linkedItems.length,
+    newItemType,
+    newItemTitle,
+  });
+  
   for (const linkedItem of linkedItems) {
     try {
+      console.log('Processing backlink for', { linkedItemSbId: linkedItem.sb_id, linkedItemTitle: linkedItem.title });
+      
       // Find the file for this SB_ID
       const file = await findFileBySbId(config, linkedItem.sb_id);
       if (!file) {
@@ -411,12 +420,16 @@ async function addBacklinks(
         continue;
       }
       
+      console.log('Found file for backlink', { path: file.path });
+      
       // Parse existing front matter
       const frontMatter = parseFrontMatter(file.content);
       if (!frontMatter) {
         console.warn(`Could not parse front matter for: ${linkedItem.sb_id}`);
         continue;
       }
+      
+      console.log('Parsed front matter', { type: frontMatter.type, existingLinks: frontMatter.links?.length || 0 });
       
       // Add backlink if not already present
       const backlink = `[[${newItemSbId}]]`;
@@ -718,6 +731,12 @@ async function executeCodeCommitOperations(
       // Add backlinks to linked items after creating new item
       // Validates: Requirement 4.1 (bidirectional linking)
       if (generatedSbId && normalizedPlan.linked_items && normalizedPlan.linked_items.length > 0) {
+        console.log('Adding backlinks', {
+          newItemSbId: generatedSbId,
+          linkedItemsCount: normalizedPlan.linked_items.length,
+          classification: normalizedPlan.classification,
+          title: normalizedPlan.title,
+        });
         await addBacklinks(
           config, 
           generatedSbId, 
