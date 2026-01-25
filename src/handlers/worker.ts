@@ -101,6 +101,7 @@ import {
   invokeSyncAll,
   invokeDeleteItem,
   invokeHealthCheck,
+  invokeRepair,
   type SyncInvokerConfig,
   type SyncResponse,
   type HealthReport,
@@ -229,11 +230,13 @@ async function processMessage(message: SQSEventMessage): Promise<void> {
       return;
     }
 
-    // Step 2.5: Check for health command
+    // Step 2.5: Check for health/rebuild/repair command
     // Validates: Requirements 5.1
     if (isHealthCommand(message_text)) {
-      const isRebuild = message_text.trim().toLowerCase() === 'rebuild';
-      await handleHealthCommand(event_id, slackContext, isRebuild);
+      const text = message_text.trim().toLowerCase();
+      const isRebuild = text === 'rebuild';
+      const isRepair = text === 'repair';
+      await handleHealthCommand(event_id, slackContext, isRebuild, isRepair);
       return;
     }
 
@@ -463,7 +466,7 @@ async function handleFixCommand(
  */
 function isHealthCommand(messageText: string): boolean {
   const text = messageText.trim().toLowerCase();
-  return text === 'health' || text === 'rebuild';
+  return text === 'health' || text === 'rebuild' || text === 'repair';
 }
 
 /**
@@ -528,19 +531,22 @@ function formatHealthReportForSlack(healthReport: HealthReport): string {
 }
 
 /**
- * Handle health command (or rebuild command)
+ * Handle health command (or rebuild/repair command)
  * 
  * Invokes the classifier with health_check operation and reports results.
  * If rebuild=true, forces a full sync before health check.
+ * If repair=true, syncs only missing items (no duplicates).
  * 
  * Validates: Requirements 5.1, 5.2, 5.3, 5.4, 5.5, 5.6
  */
 async function handleHealthCommand(
   eventId: string,
   slackContext: SlackContext,
-  rebuild: boolean = false
+  rebuild: boolean = false,
+  repair: boolean = false
 ): Promise<void> {
-  log('info', rebuild ? 'Processing rebuild command' : 'Processing health command', { event_id: eventId });
+  const commandType = rebuild ? 'rebuild' : repair ? 'repair' : 'health';
+  log('info', `Processing ${commandType} command`, { event_id: eventId });
 
   await updateExecutionState(idempotencyConfig, eventId, { status: 'EXECUTING' });
 
@@ -583,6 +589,63 @@ async function handleHealthCommand(
       });
     }
 
+    // If repair requested, first get health report to find missing items
+    if (repair) {
+      // Get health report first
+      const healthResult = await invokeHealthCheck(syncConfig, {
+        operation: 'health_check',
+        actorId: slackContext.user_id,
+      });
+
+      if (!healthResult.success || !healthResult.healthReport) {
+        await sendSlackReply(
+          { botTokenParam: BOT_TOKEN_PARAM },
+          {
+            channel: slackContext.channel_id,
+            text: formatErrorReply('Failed to get health report for repair'),
+            thread_ts: slackContext.thread_ts,
+          }
+        );
+        await markFailed(idempotencyConfig, eventId, 'Health check failed');
+        return;
+      }
+
+      const missingIds = healthResult.healthReport.missingInMemory;
+      if (missingIds.length === 0) {
+        await sendSlackReply(
+          { botTokenParam: BOT_TOKEN_PARAM },
+          {
+            channel: slackContext.channel_id,
+            text: '✅ Nothing to repair - Memory is in sync',
+            thread_ts: slackContext.thread_ts,
+          }
+        );
+        await markCompleted(idempotencyConfig, eventId);
+        return;
+      }
+
+      await sendSlackReply(
+        { botTokenParam: BOT_TOKEN_PARAM },
+        {
+          channel: slackContext.channel_id,
+          text: `🔧 Repairing ${missingIds.length} missing item${missingIds.length > 1 ? 's' : ''}...`,
+          thread_ts: slackContext.thread_ts,
+        }
+      );
+
+      const repairResult = await invokeRepair(syncConfig, {
+        operation: 'repair',
+        actorId: slackContext.user_id,
+        missingIds,
+      });
+
+      log('info', 'Repair completed', {
+        event_id: eventId,
+        success: repairResult.success,
+        items_synced: repairResult.itemsSynced,
+      });
+    }
+
     // Invoke classifier with health_check operation
     const result = await invokeHealthCheck(syncConfig, {
       operation: 'health_check',
@@ -595,9 +658,11 @@ async function handleHealthCommand(
       replyText = formatHealthReportForSlack(result.healthReport);
       if (rebuild) {
         replyText = '✅ Memory rebuilt successfully\n\n' + replyText;
+      } else if (repair) {
+        replyText = '✅ Repair completed\n\n' + replyText;
       }
     } else {
-      replyText = `❌ ${rebuild ? 'Rebuild' : 'Health check'} failed\nError: ${result.error || 'Unknown error'}`;
+      replyText = `❌ ${commandType} failed\nError: ${result.error || 'Unknown error'}`;
     }
 
     await sendSlackReply(

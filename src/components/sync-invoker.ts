@@ -40,6 +40,12 @@ export interface HealthCheckRequest {
   actorId: string;
 }
 
+export interface RepairRequest {
+  operation: 'repair';
+  actorId: string;
+  missingIds: string[];  // sb_ids to sync
+}
+
 export interface SyncResponse {
   success: boolean;
   itemsSynced: number;
@@ -78,6 +84,7 @@ interface SyncPayload {
   item_content?: string;
   commit_id?: string;
   sb_id?: string;
+  missing_ids?: string[];
   force_full_sync?: boolean;
 }
 
@@ -347,6 +354,42 @@ export async function invokeHealthCheck(
     return result;
   } catch (error) {
     console.error('Failed to invoke health check', {
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+    return {
+      success: false,
+      itemsSynced: 0,
+      itemsDeleted: 0,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+}
+
+/**
+ * Invoke classifier to repair missing items.
+ * Only syncs the specified sb_ids, avoiding duplicates.
+ *
+ * Validates: Requirements 5.1
+ */
+export async function invokeRepair(
+  config: SyncInvokerConfig,
+  request: RepairRequest
+): Promise<SyncResponse> {
+  const payload: SyncPayload = {
+    sync_operation: 'repair',
+    actor_id: request.actorId,
+    missing_ids: request.missingIds,
+  };
+
+  try {
+    const result = await invokeClassifierSync(config, payload, true);
+    console.log('Repair completed', {
+      success: result.success,
+      itemsSynced: result.itemsSynced,
+    });
+    return result;
+  } catch (error) {
+    console.error('Failed to invoke repair', {
       error: error instanceof Error ? error.message : 'Unknown error',
     });
     return {

@@ -241,6 +241,7 @@ export {
   invokeDeleteItem,
   invokeSyncAll,
   invokeHealthCheck,
+  invokeRepair,
   type SyncItemRequest,
   type DeleteItemRequest,
   type SyncAllRequest,

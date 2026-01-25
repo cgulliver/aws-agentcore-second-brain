@@ -1032,6 +1032,8 @@ def handle_sync_operation(payload: dict) -> dict:
         return _handle_sync_all(sync_module, actor_id, payload)
     elif operation == 'delete_item':
         return _handle_delete_item(sync_module, actor_id, payload)
+    elif operation == 'repair':
+        return _handle_repair(sync_module, actor_id, payload)
     else:
         return {
             "success": False,
@@ -1165,6 +1167,72 @@ def _handle_delete_item(sync_module, actor_id: str, payload: dict) -> dict:
             "items_synced": 0,
             "items_deleted": 0,
             "error": f"Delete item failed: {str(e)}",
+            "health_report": None,
+        }
+
+
+def _handle_repair(sync_module, actor_id: str, payload: dict) -> dict:
+    """
+    Handle repair operation - sync only missing items.
+    
+    This avoids creating duplicates by only syncing items that are
+    missing from Memory (identified by sb_id).
+    """
+    missing_ids = payload.get('missing_ids', [])
+    
+    if not missing_ids:
+        return {
+            "success": True,
+            "items_synced": 0,
+            "items_deleted": 0,
+            "error": None,
+            "health_report": None,
+        }
+    
+    try:
+        # Get current HEAD commit
+        head_commit = sync_module.get_codecommit_head()
+        if not head_commit:
+            return {
+                "success": False,
+                "items_synced": 0,
+                "items_deleted": 0,
+                "error": "Failed to get CodeCommit HEAD",
+                "health_report": None,
+            }
+        
+        # Get all item files to find the ones we need
+        all_files = sync_module._get_all_item_files(head_commit)
+        
+        items_synced = 0
+        for file_info in all_files:
+            path = file_info['path']
+            # Check if this file's sb_id is in the missing list
+            for missing_id in missing_ids:
+                if missing_id in path:
+                    content = sync_module.get_file_content(path, head_commit)
+                    if content:
+                        metadata = sync_module.extract_item_metadata(path, content)
+                        if metadata and metadata.sb_id == missing_id:
+                            if sync_module.store_item_in_memory(actor_id, metadata):
+                                items_synced += 1
+                                print(f"Repaired: {missing_id}")
+                    break
+        
+        return {
+            "success": True,
+            "items_synced": items_synced,
+            "items_deleted": 0,
+            "error": None,
+            "health_report": None,
+        }
+    except Exception as e:
+        print(f"Error during repair: {e}")
+        return {
+            "success": False,
+            "items_synced": 0,
+            "items_deleted": 0,
+            "error": f"Repair failed: {str(e)}",
             "health_report": None,
         }
 
