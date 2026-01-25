@@ -398,7 +398,9 @@ function regenerateFileWithFrontMatter(
 async function addBacklinks(
   config: KnowledgeStoreConfig,
   newItemSbId: string,
-  linkedItems: LinkedItem[]
+  linkedItems: LinkedItem[],
+  newItemType?: string,
+  newItemTitle?: string
 ): Promise<void> {
   for (const linkedItem of linkedItems) {
     try {
@@ -431,8 +433,15 @@ async function addBacklinks(
           updated_at: new Date().toISOString(),
         };
         
-        // Update the file
-        const newContent = regenerateFileWithFrontMatter(file.content, updatedFrontMatter);
+        // Update the file content
+        let newContent = regenerateFileWithFrontMatter(file.content, updatedFrontMatter);
+        
+        // If the linked item is a project and we're adding an idea/decision, 
+        // also add to the appropriate section in the body
+        if (frontMatter.type === 'project' && newItemType && newItemTitle) {
+          newContent = addToProjectSection(newContent, newItemType, newItemSbId, newItemTitle);
+        }
+        
         const parentCommitId = await getLatestCommitId(config);
         await writeFile(
           config,
@@ -444,6 +453,57 @@ async function addBacklinks(
     } catch (error) {
       console.warn(`Failed to add backlink to ${linkedItem.sb_id}:`, error);
       // Continue with other backlinks
+    }
+  }
+}
+
+/**
+ * Add an item to the appropriate section in a project file body
+ * 
+ * For ideas, adds to ## Ideas section
+ * For decisions, adds to ## Decisions section
+ */
+function addToProjectSection(
+  content: string,
+  itemType: string,
+  sbId: string,
+  title: string
+): string {
+  // Determine which section to add to
+  let sectionHeader: string;
+  if (itemType === 'idea') {
+    sectionHeader = '## Ideas';
+  } else if (itemType === 'decision') {
+    sectionHeader = '## Decisions';
+  } else {
+    // Only handle ideas and decisions for now
+    return content;
+  }
+  
+  const wikilink = `- [[${sbId}|${title}]]`;
+  
+  // Check if the wikilink already exists in the content
+  if (content.includes(`[[${sbId}|`) || content.includes(`[[${sbId}]]`)) {
+    return content;
+  }
+  
+  // Find the section
+  const sectionRegex = new RegExp(`(${sectionHeader}\\n)`, 'i');
+  const sectionMatch = content.match(sectionRegex);
+  
+  if (sectionMatch && sectionMatch.index !== undefined) {
+    // Section exists - add after the header
+    const insertPos = sectionMatch.index + sectionMatch[0].length;
+    return content.slice(0, insertPos) + wikilink + '\n' + content.slice(insertPos);
+  } else {
+    // Section doesn't exist - add it before the Source line or at end
+    const sourceMatch = content.match(/\n---\nSource:/);
+    const newSection = `\n${sectionHeader}\n${wikilink}\n`;
+    
+    if (sourceMatch && sourceMatch.index !== undefined) {
+      return content.slice(0, sourceMatch.index) + newSection + content.slice(sourceMatch.index);
+    } else {
+      return content + newSection;
     }
   }
 }
@@ -658,7 +718,13 @@ async function executeCodeCommitOperations(
       // Add backlinks to linked items after creating new item
       // Validates: Requirement 4.1 (bidirectional linking)
       if (generatedSbId && normalizedPlan.linked_items && normalizedPlan.linked_items.length > 0) {
-        await addBacklinks(config, generatedSbId, normalizedPlan.linked_items);
+        await addBacklinks(
+          config, 
+          generatedSbId, 
+          normalizedPlan.linked_items,
+          normalizedPlan.classification || undefined,
+          normalizedPlan.title || undefined
+        );
       }
     }
   }
