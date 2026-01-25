@@ -149,7 +149,7 @@ Don't forget to pick up the dry cleaning tomorrow
 **Audit Trail:** Tasks are also logged to `00-inbox/YYYY-MM-DD.md` with full context preserved:
 ```
 - HH:MM: [task] Task title (Project: Project Name)
-  > Contact: Chase (landscaping) - 404.695.5188
+  > Contact: Chase (landscaping) - 555-123-4567
   > Review landscaping estimates
 ```
 
