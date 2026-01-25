@@ -216,6 +216,17 @@ Show me on-hold projects
 Which projects are complete?
 ```
 
+### Querying for Reports
+
+Ask for overall reports and summaries:
+```
+Give me an overall report of priorities
+Show me a summary of my projects
+What's the status of everything?
+```
+
+The system uses semantic search to find all relevant items and provides a consolidated report.
+
 ## Task-Project Linking
 
 Tasks can be automatically linked to existing projects using natural language references. The system uses AgentCore Memory to find matching projects from your knowledge base.
