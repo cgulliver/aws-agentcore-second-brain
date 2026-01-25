@@ -91,50 +91,49 @@ Bot: Captured as decision
 ## How It Works
 
 ```
-┌─────────────┐     ┌─────────────────────────────────────────────────────────────┐
-│   Slack     │     │                          AWS                                │
-│             │     │                                                             │
-│  ┌───────┐  │     │  ┌─────────┐    ┌─────────┐    ┌─────────┐                  │
-│  │  DM   │──┼────▶│  │ API GW  │───▶│ Ingress │───▶│   SQS   │                  │
-│  └───────┘  │     │  │ (mTLS)  │    │ Lambda  │    └────┬────┘                  │
-│      ▲      │     │  └─────────┘    └─────────┘         │                       │
-│      │      │     │                                     ▼                       │
-│      │      │     │  ┌──────────────────────────────────────────────────────┐   │
-│      │      │     │  │                   Worker Lambda                      │   │
-│      │      │     │  │                                                      │   │
-│      │      │     │  │  ┌──────────┐  ┌──────────┐  ┌─────────┐             │   │
-│  ┌───┴───┐  │     │  │  │ DynamoDB │  │CodeCommit│  │   SES   │─────────────┼───┼──┐
-│  │ Reply │◀─┼─────┼──│  │ (state)  │  │  (repo)  │  │ (email) │             │   │  │
-│  └───────┘  │     │  │  └──────────┘  └────┬─────┘  └─────────┘             │   │  │
-└─────────────┘     │  │                     │                                │   │  │
-                    │  └─────────────────────┼────────────────────────────────┘   │  │
-                    │                        │                                    │  │
-                    │         ┌──────────────┼──────────────┐                     │  │
-                    │         │              │              │                     │  │
-                    │    git clone      invokes        SES email                  │  │
-                    │         │        (classify)          │                      │  │
-                    │         ▼              ▼             │                      │  │
-                    │  ┌─────────────┐ ┌────────────────────────────────────┐     │  │
-                    │  │  Obsidian   │ │    AgentCore Runtime (classifier)  │     │  │
-                    │  │  Working    │ │                                    │     │  │
-                    │  │  Copy / CLI │ │  ┌───────────┐    ┌─────────────┐  │     │  │
-                    │  │ (read-only) │ │  │  Bedrock  │    │  AgentCore  │  │     │  │
-                    │  └─────────────┘ │  │Nova 2 Lite│    │   Memory    │  │     │  │
-                    │                  │  └───────────┘    └──────▲──────┘  │     │  │
-                    │                  │                         │         │     │  │
-                    │                  │         sync (reads repo)         │     │  │
-                    │                  │                                   │     │  │
-                    │                  └───────────────────────────────────┘     │  │
-                    │                                                            │  │
-                    └────────────────────────────────────────────────────────────┘  │
-                                                                                    │
-                                                         ┌──────────────────────────┘
-                                                         │
-                                                         ▼
-                                              ┌─────────────────┐
-                                              │   OmniFocus     │
-                                              │   (Mail Drop)   │
-                                              └─────────────────┘
+┌─────────────┐     ┌───────────────────────────────────────────────────────────────┐
+│   Slack     │     │                            AWS                                │
+│             │     │                                                               │
+│  ┌───────┐  │     │  ┌─────────┐    ┌─────────┐    ┌─────────┐                    │
+│  │  DM   │──┼────▶│  │ API GW  │───▶│ Ingress │───▶│   SQS   │                    │
+│  └───────┘  │     │  │ (mTLS)  │    │ Lambda  │    └────┬────┘                    │
+│      ▲      │     │  └─────────┘    └─────────┘         │                         │
+│      │      │     │                                     ▼                         │
+│      │      │     │  ┌─────────────────────────────────────────────────────────┐  │
+│      │      │     │  │                    Worker Lambda                        │  │
+│      │      │     │  │                                                         │  │
+│      │      │     │  │   ┌──────────┐   ┌──────────┐   ┌─────────┐             │  │
+│  ┌───┴───┐  │     │  │   │ DynamoDB │   │CodeCommit│   │   SES   │─────────────┼──┼───▶ OmniFocus
+│  │ Reply │◀─┼─────┼──┤   │ (state)  │   │  (repo)  │   │ (tasks) │             │  │     (Mail Drop)
+│  └───────┘  │     │  │   └──────────┘   └─────┬────┘   └─────────┘             │  │
+└─────────────┘     │  │                        │                                │  │
+                    │  └────────────────────────┼────────────────────────────────┘  │
+                    │                           │                                   │
+                    │                      invokes                                  │
+                    │                      (classify)                               │
+                    │                           ▼                                   │
+                    │  ┌─────────────────────────────────────────────────────────┐  │
+                    │  │            AgentCore Runtime (classifier)              │  │
+                    │  │                                                         │  │
+                    │  │   ┌────────────┐               ┌──────────────┐         │  │
+                    │  │   │  Bedrock   │               │   AgentCore  │         │  │
+                    │  │   │ Nova Lite  │               │    Memory    │         │  │
+                    │  │   └────────────┘               └──────────────┘         │  │
+                    │  │                                       ▲                 │  │
+                    │  │                           sync (reads CodeCommit)       │  │
+                    │  │                                                         │  │
+                    │  └─────────────────────────────────────────────────────────┘  │
+                    │                                                               │
+                    │                           │                                   │
+                    │                      git clone                                │
+                    │                           │                                   │
+                    └───────────────────────────┼───────────────────────────────────┘
+                                                │
+                                                ▼
+                              ┌─────────────────────────────────────┐
+                              │  Obsidian / Working Copy / CLI      │
+                              │         (read-only sync)            │
+                              └─────────────────────────────────────┘
 ```
 
 ### Processing Flow
@@ -169,8 +168,10 @@ Ideas, decisions, and projects include:
 - **Smart Classification** - AI-powered categorization with confidence scoring
 - **Memory-Based Item Lookup** - AgentCore Memory provides item context for intelligent linking
 - **Memory-First Retrieval** - Items retrieved from Memory cache first, with CodeCommit fallback
-- **Async Sync** - Items sync to Memory after each commit
+- **Delta Sync** - Items sync to Memory automatically after each capture (non-blocking)
+- **Timestamped Records** - Memory records include sync timestamps for historical tracking
 - **Health Check** - Run `health` to verify Memory/CodeCommit consistency
+- **Repair Command** - Run `repair` to sync only missing items without duplicates
 - **Query Support** - Ask for reports, summaries, and project status overviews
 - **Clarification Flow** - Asks when uncertain, remembers context
 - **Fix Command** - Correct mistakes with `fix: change the title to...` or reclassify with `fix: this should be a task`

@@ -1201,23 +1201,31 @@ def _handle_repair(sync_module, actor_id: str, payload: dict) -> dict:
                 "health_report": None,
             }
         
-        # Get all item files to find the ones we need
+        # Get all item files and extract their metadata
         all_files = sync_module._get_all_item_files(head_commit)
         
-        items_synced = 0
+        # Build a map of sb_id -> metadata for all items
+        items_by_id = {}
         for file_info in all_files:
             path = file_info['path']
-            # Check if this file's sb_id is in the missing list
-            for missing_id in missing_ids:
-                if missing_id in path:
-                    content = sync_module.get_file_content(path, head_commit)
-                    if content:
-                        metadata = sync_module.extract_item_metadata(path, content)
-                        if metadata and metadata.sb_id == missing_id:
-                            if sync_module.store_item_in_memory(actor_id, metadata):
-                                items_synced += 1
-                                print(f"Repaired: {missing_id}")
-                    break
+            content = sync_module.get_file_content(path, head_commit)
+            if content:
+                metadata = sync_module.extract_item_metadata(path, content)
+                if metadata:
+                    items_by_id[metadata.sb_id] = metadata
+        
+        # Sync only the missing items
+        items_synced = 0
+        for missing_id in missing_ids:
+            if missing_id in items_by_id:
+                metadata = items_by_id[missing_id]
+                if sync_module.store_item_in_memory(actor_id, metadata):
+                    items_synced += 1
+                    print(f"Repaired: {missing_id}")
+                else:
+                    print(f"Failed to repair: {missing_id}")
+            else:
+                print(f"Item not found in CodeCommit: {missing_id}")
         
         return {
             "success": True,
