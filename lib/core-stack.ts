@@ -403,6 +403,14 @@ export class CoreStack extends cdk.Stack {
     // Validates: Requirements 1.1, 2.1, 3.1, 5.1 (Memory-Repo Sync)
     // =========================================================================
     
+    // SSM Parameter for sync marker (must be defined before sync Lambda)
+    const syncMarkerParam = new ssm.StringParameter(this, 'SyncMarkerParam', {
+      parameterName: '/second-brain/last-sync-commit',
+      description: 'Last CodeCommit commit ID synced to Memory (for delta sync)',
+      stringValue: 'initial', // Will be updated by sync process
+      tier: ssm.ParameterTier.STANDARD,
+    });
+
     // Sync Lambda (Python) - handles sync operations between CodeCommit and Memory
     // Note: bedrock_agentcore package must be pre-installed in agent/ directory
     // Run: pip install bedrock-agentcore -t agent/ before deploying
@@ -576,18 +584,6 @@ export class CoreStack extends cdk.Stack {
       parameterName: '/second-brain/conversation-ttl-seconds',
       description: 'TTL for conversation context records in seconds (default: 3600 = 1 hour)',
       stringValue: '3600',
-      tier: ssm.ParameterTier.STANDARD,
-    });
-
-    // =========================================================================
-    // Task 3.13: SSM Parameter for Memory Sync Marker
-    // Tracks last synced commit ID for delta sync
-    // =========================================================================
-    
-    const syncMarkerParam = new ssm.StringParameter(this, 'SyncMarkerParam', {
-      parameterName: '/second-brain/last-sync-commit',
-      description: 'Last CodeCommit commit ID synced to Memory (for delta sync)',
-      stringValue: 'initial', // Will be updated by sync process
       tier: ssm.ParameterTier.STANDARD,
     });
 
