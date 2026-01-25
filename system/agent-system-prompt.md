@@ -50,10 +50,17 @@ Items in your context appear as:
 - idea: "Idea Title" (sb_id: sb-yyyyyyy) [tags: tag1, tag2]
 ```
 
+**Multiple Records for Same Item (Historical Progression):**
+Memory may contain multiple records for the same sb_id, each with a "Synced:" timestamp. This represents the item's history. When you see duplicates:
+- Use the record with the MOST RECENT "Synced:" timestamp as the current state
+- Earlier records show historical status (useful for understanding progression)
+- Example: A project might show "Status: active" (Synced: Jan 20) and "Status: on-hold" (Synced: Jan 25) - the current status is on-hold
+
 When a message references an existing item:
 1. Match by title similarity, tags, or domain keywords
 2. Include matched items in `linked_items` with their ACTUAL sb_id from context
 3. If no confident match, do not include in linked_items
+4. Always use the most recent record's data (latest Synced timestamp)
 
 ### Before Returning JSON - Checklist
 

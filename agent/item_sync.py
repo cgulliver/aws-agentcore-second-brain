@@ -40,14 +40,25 @@ class ItemMetadata:
     tags: List[str] = field(default_factory=list)  # e.g., ["landscaping", "home"]
     status: Optional[str] = None  # For projects: "active", "on-hold", "complete", "cancelled"
     
-    def to_memory_text(self) -> str:
+    def to_memory_text(self, synced_at: str = None) -> str:
         """
         Format metadata as text for Memory storage.
         
         The format is human-readable and suitable for semantic search.
+        Includes a timestamp so the LLM can identify the most recent version
+        when multiple records exist for the same item (historical progression).
+        
+        Args:
+            synced_at: ISO-8601 timestamp of when this record was synced.
+                       If not provided, uses current time.
         
         Validates: Requirements 6.1, 6.2, 6.3
         """
+        from datetime import datetime, timezone
+        
+        if not synced_at:
+            synced_at = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        
         lines = [
             f"Item: {self.title}",
             f"ID: {self.sb_id}",
@@ -58,6 +69,7 @@ class ItemMetadata:
             lines.append(f"Tags: {', '.join(self.tags)}")
         if self.status:
             lines.append(f"Status: {self.status}")
+        lines.append(f"Synced: {synced_at}")
         return "\n".join(lines)
 
 

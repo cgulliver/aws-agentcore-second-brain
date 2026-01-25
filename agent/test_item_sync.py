@@ -82,6 +82,32 @@ class TestItemMetadataToMemoryText:
             assert f"Status: {item.status}" in text, "Status must be in output for projects"
         else:
             assert "Status:" not in text, "Status should not be present when None"
+    
+    @given(item_metadata_strategy())
+    @settings(max_examples=100)
+    def test_contains_synced_timestamp(self, item: ItemMetadata):
+        """Verify Synced timestamp is always included for historical tracking."""
+        text = item.to_memory_text()
+        
+        # Synced timestamp must always be present
+        assert "Synced:" in text, "Synced timestamp must be in output"
+        # Should be ISO-8601 format
+        import re
+        assert re.search(r'Synced: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z', text), \
+            "Synced timestamp must be ISO-8601 format"
+    
+    def test_custom_synced_timestamp(self):
+        """Verify custom synced_at timestamp is used when provided."""
+        item = ItemMetadata(
+            sb_id="sb-1234567",
+            title="Test Item",
+            item_type="idea",
+            path="10-ideas/test.md",
+        )
+        custom_time = "2025-01-20T10:30:00Z"
+        text = item.to_memory_text(synced_at=custom_time)
+        
+        assert f"Synced: {custom_time}" in text, "Custom timestamp should be used"
 
 
 class TestSyncResult:
