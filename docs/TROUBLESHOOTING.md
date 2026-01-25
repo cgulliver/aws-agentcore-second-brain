@@ -194,6 +194,16 @@ aws logs filter-log-events \
   ```
 - Items may exist but the classifier can't list them without proper permissions
 
+**Health check shows "Out of sync" with missing items**
+- Run `repair` to sync only the missing items
+- This avoids duplicates by checking what's already in Memory
+- If repair fails, check classifier logs for errors
+
+**Memory record count higher than CodeCommit item count**
+- This is normal - Memory stores historical versions with timestamps
+- The LLM uses the `Synced:` timestamp to identify the most recent version
+- Each update creates a new record rather than replacing the old one
+
 **Items not linking correctly**
 1. Verify items have proper front matter (id, type, title, tags)
 2. Check that items are in the correct folders (10-ideas/, 20-decisions/, 30-projects/)

@@ -38,10 +38,11 @@ The system automatically syncs your knowledge items (projects, ideas, decisions)
 
 1. **Memory-First Retrieval**: When classifying, the system first checks AgentCore Memory for cached items
 2. **CodeCommit Fallback**: If Memory is empty or unavailable, falls back to reading directly from CodeCommit
-3. **Async Sync After Classification**: After each classification completes, items sync to Memory asynchronously (non-blocking)
-4. **Direct Storage**: Items are stored using the `BatchCreateMemoryRecords` API, which preserves structured metadata exactly as formatted (bypasses semantic summarization)
-5. **Semantic Retrieval**: When you mention a project or topic, Memory retrieves relevant items based on semantic similarity
-6. **Automatic Linking**: The classifier uses this context to populate `linked_items` in the Action Plan
+3. **Delta Sync**: After each capture, only the changed item syncs to Memory (non-blocking, fire-and-forget)
+4. **Timestamped Records**: Each Memory record includes a `Synced:` timestamp so the LLM can identify the most recent version
+5. **Direct Storage**: Items are stored using the `BatchCreateMemoryRecords` API, which preserves structured metadata exactly as formatted (bypasses semantic summarization)
+6. **Semantic Retrieval**: When you mention a project or topic, Memory retrieves relevant items based on semantic similarity
+7. **Automatic Linking**: The classifier uses this context to populate `linked_items` in the Action Plan
 
 ### What Gets Synced
 
@@ -54,11 +55,38 @@ Each item's metadata (SB_ID, title, type, tags, status) is stored for retrieval.
 
 ### Benefits
 
-- **No manual sync needed**: Memory stays up-to-date via async sync after each classification
+- **Delta sync**: Only changed items sync after each capture (not full rebuild)
+- **Non-blocking**: Sync happens after response, doesn't slow down replies
+- **Timestamped**: Records include sync timestamps for historical tracking
 - **Fast responses**: Memory-first retrieval avoids CodeCommit latency on cache hits
 - **No tool calls needed**: The LLM doesn't need to search - context is provided automatically
 - **Better matching**: Semantic search finds related items even with different wording
 - **Graceful degradation**: Falls back to CodeCommit if Memory is empty or unavailable
+
+### Health Check
+
+Run `health` to verify Memory/CodeCommit sync status:
+
+```
+health
+```
+
+Response shows:
+- CodeCommit item count
+- Memory record count (may be higher due to historical versions)
+- Sync status (in sync / out of sync)
+- Missing items (if any)
+- Current HEAD commit
+
+### Repair Command
+
+If items are missing from Memory, run `repair` to sync only the missing items (no duplicates):
+
+```
+repair
+```
+
+This finds items that exist in CodeCommit but not in Memory and syncs only those.
 
 ## Message Classification
 
