@@ -418,75 +418,13 @@ export class CoreStack extends cdk.Stack {
     // Validates: Requirements 1.1, 2.1, 3.1, 5.1 (Memory-Repo Sync)
     // =========================================================================
     
-    // SSM Parameter for sync marker (must be defined before sync Lambda and AgentCore runtime)
+    // SSM Parameter for sync marker (used by AgentCore runtime for delta sync)
     const syncMarkerParam = new ssm.StringParameter(this, 'SyncMarkerParam', {
       parameterName: '/second-brain/last-sync-commit',
       description: 'Last CodeCommit commit ID synced to Memory (for delta sync)',
       stringValue: 'initial', // Will be updated by sync process
       tier: ssm.ParameterTier.STANDARD,
     });
-
-    // Sync Lambda (Python) - handles sync operations between CodeCommit and Memory
-    // Note: bedrock_agentcore package must be pre-installed in agent/ directory
-    // Run: pip install bedrock-agentcore -t agent/ before deploying
-    const syncLambda = new lambda.Function(this, 'SyncLambda', {
-      functionName: 'second-brain-sync',
-      description: 'Sync items between CodeCommit and AgentCore Memory',
-      runtime: lambda.Runtime.PYTHON_3_12,
-      handler: 'sync_handler.handler',
-      code: lambda.Code.fromAsset('agent'),
-      timeout: cdk.Duration.seconds(60),
-      memorySize: 256,
-      environment: {
-        MEMORY_ID: agentMemory.getAtt('MemoryId').toString(),
-        KNOWLEDGE_REPO_NAME: this.repository.repositoryName,
-        SYNC_MARKER_PARAM: syncMarkerParam.parameterName,
-        // Note: AWS_REGION is automatically set by Lambda runtime
-      },
-    });
-
-    // Grant SSM read/write for sync marker
-    syncMarkerParam.grantRead(syncLambda);
-    syncMarkerParam.grantWrite(syncLambda);
-
-    // Task 11.2: Grant permissions to Sync Lambda
-    // Grant CodeCommit read access for reading items during sync
-    this.repository.grantRead(syncLambda);
-    syncLambda.addToRolePolicy(
-      new iam.PolicyStatement({
-        sid: 'CodeCommitReadAccess',
-        effect: iam.Effect.ALLOW,
-        actions: [
-          'codecommit:GetFile',
-          'codecommit:GetFolder',
-          'codecommit:GetBranch',
-          'codecommit:GetDifferences',
-          'codecommit:GetCommit',
-        ],
-        resources: [this.repository.repositoryArn],
-      })
-    );
-
-    // Grant Memory read/write access for sync operations
-    // Including batch operations for direct item storage (bypasses strategy processing)
-    syncLambda.addToRolePolicy(
-      new iam.PolicyStatement({
-        sid: 'AgentCoreMemoryAccess',
-        effect: iam.Effect.ALLOW,
-        actions: [
-          'bedrock-agentcore:GetMemory',
-          'bedrock-agentcore:CreateMemoryRecord',
-          'bedrock-agentcore:SearchMemoryRecords',
-          'bedrock-agentcore:DeleteMemoryRecord',
-          'bedrock-agentcore:BatchCreateMemoryRecords',
-          'bedrock-agentcore:BatchDeleteMemoryRecords',
-          'bedrock-agentcore:BatchUpdateMemoryRecords',
-        ],
-        resources: [
-          `arn:aws:bedrock-agentcore:${this.region}:${this.account}:memory/*`,
-        ],
-      })
-    );
 
     // AgentCore Runtime (CfnRuntime)
     // Note: Using L1 construct as L2 may not be available yet
@@ -793,11 +731,6 @@ export class CoreStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'ReasoningEffort', {
       value: reasoningEffort,
       description: 'Nova 2 extended thinking effort level (disabled, low, medium, high)',
-    });
-
-    new cdk.CfnOutput(this, 'SyncLambdaArn', {
-      value: syncLambda.functionArn,
-      description: 'Sync Lambda Function ARN for Memory-Repo sync',
     });
   }
 }
