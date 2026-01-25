@@ -464,6 +464,7 @@ async function handleFixCommand(
 function isHealthCommand(messageText: string): boolean {
   const text = messageText.trim().toLowerCase();
   return text === 'health' || text === 'rebuild';
+}
 
 /**
  * Format health report for Slack reply
