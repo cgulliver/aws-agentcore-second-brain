@@ -1387,21 +1387,22 @@ async function handleStatusUpdate(
 
     await appendReceipt(knowledgeConfig, receipt);
 
-    // Sync to Memory after successful commit
-    // Note: We await this to ensure it completes before Lambda freezes
-    if (AGENT_RUNTIME_ARN && updateResult.commitId) {
+    // Sync the updated item to Memory after successful commit
+    // Use invokeSyncItem for the specific file we just updated
+    if (AGENT_RUNTIME_ARN && updateResult.commitId && updateResult.updatedContent) {
       try {
-        const syncResult = await invokeSyncAll(syncConfig, {
-          operation: 'sync_all',
+        await invokeSyncItem(syncConfig, {
+          operation: 'sync_item',
           actorId: slackContext.user_id,
+          itemPath: matchResult.bestMatch.path,
+          itemContent: updateResult.updatedContent,
         });
-        log('info', 'Status update post-commit sync completed', { 
+        log('info', 'Status update item synced to Memory', { 
           event_id: eventId, 
-          items_synced: syncResult.itemsSynced,
-          success: syncResult.success,
+          item_path: matchResult.bestMatch.path,
         });
       } catch (err) {
-        log('warn', 'Status update post-commit sync failed', { event_id: eventId, error: err instanceof Error ? err.message : 'Unknown' });
+        log('warn', 'Status update sync failed', { event_id: eventId, error: err instanceof Error ? err.message : 'Unknown' });
       }
     }
 
