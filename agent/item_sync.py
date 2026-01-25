@@ -509,7 +509,7 @@ class ItemSyncModule:
         print(f"Info: Item {sb_id} marked for deletion (will expire naturally)")
         return True
 
-    def sync_single_item(self, actor_id: str, file_path: str, content: str) -> SyncResult:
+    def sync_single_item(self, actor_id: str, file_path: str, content: str, commit_id: str = None) -> SyncResult:
         """
         Sync a single item to Memory.
         
@@ -521,6 +521,7 @@ class ItemSyncModule:
             actor_id: User/actor ID for scoped storage
             file_path: Path to the committed file (e.g., "10-ideas/2025-01-20__title__sb-1234567.md")
             content: File content with YAML front matter
+            commit_id: Optional commit ID to update sync marker after successful sync
             
         Returns:
             SyncResult with success status and items_synced count
@@ -541,10 +542,17 @@ class ItemSyncModule:
             # Store in Memory
             if self.store_item_in_memory(actor_id, metadata):
                 print(f"Info: Synced item {metadata.sb_id} to Memory")
+                
+                # Update sync marker if commit_id provided
+                if commit_id:
+                    self.set_sync_marker(commit_id)
+                    print(f"Info: Updated sync marker to {commit_id[:7]}")
+                
                 return SyncResult(
                     success=True,
                     items_synced=1,
                     items_deleted=0,
+                    new_commit_id=commit_id,
                 )
             else:
                 return SyncResult(

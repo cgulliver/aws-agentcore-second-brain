@@ -1389,6 +1389,7 @@ async function handleStatusUpdate(
 
     // Sync the updated item to Memory after successful commit
     // Use invokeSyncItem for the specific file we just updated
+    // Pass commitId to update the sync marker after successful sync
     if (AGENT_RUNTIME_ARN && updateResult.commitId && updateResult.updatedContent) {
       try {
         await invokeSyncItem(syncConfig, {
@@ -1396,10 +1397,12 @@ async function handleStatusUpdate(
           actorId: slackContext.user_id,
           itemPath: matchResult.bestMatch.path,
           itemContent: updateResult.updatedContent,
+          commitId: updateResult.commitId,
         });
         log('info', 'Status update item synced to Memory', { 
           event_id: eventId, 
           item_path: matchResult.bestMatch.path,
+          commit_id: updateResult.commitId,
         });
       } catch (err) {
         log('warn', 'Status update sync failed', { event_id: eventId, error: err instanceof Error ? err.message : 'Unknown' });

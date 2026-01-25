@@ -20,6 +20,7 @@ export interface SyncItemRequest {
   actorId: string;
   itemPath: string;
   itemContent: string;
+  commitId?: string;  // Optional: update sync marker after successful sync
 }
 
 export interface DeleteItemRequest {
@@ -75,6 +76,7 @@ interface SyncPayload {
   actor_id: string;
   item_path?: string;
   item_content?: string;
+  commit_id?: string;
   sb_id?: string;
   force_full_sync?: boolean;
 }
@@ -118,6 +120,9 @@ function toSyncPayload(
   }
   if ('itemContent' in request) {
     payload.item_content = request.itemContent;
+  }
+  if ('commitId' in request && request.commitId) {
+    payload.commit_id = request.commitId;
   }
   if ('sbId' in request) {
     payload.sb_id = request.sbId;

@@ -1076,6 +1076,7 @@ def _handle_sync_item(sync_module, actor_id: str, payload: dict) -> dict:
     """Handle single item sync operation."""
     item_path = payload.get('item_path')
     item_content = payload.get('item_content')
+    commit_id = payload.get('commit_id')  # Optional: update marker after sync
     
     if not item_path or not item_content:
         return {
@@ -1087,7 +1088,7 @@ def _handle_sync_item(sync_module, actor_id: str, payload: dict) -> dict:
         }
     
     try:
-        result = sync_module.sync_single_item(actor_id, item_path, item_content)
+        result = sync_module.sync_single_item(actor_id, item_path, item_content, commit_id)
         return {
             "success": result.success,
             "items_synced": result.items_synced,
