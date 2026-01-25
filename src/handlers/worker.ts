@@ -434,22 +434,22 @@ async function handleFixCommand(
     }
   );
 
-  // Sync to Memory after successful commit
-  // Note: We await this to ensure it completes before Lambda freezes
+  // Notify classifier of commit for background sync (fire-and-forget)
+  // Fix operations may modify content in ways we don't have readily available,
+  // so we use sync_all to let the classifier figure out what changed
   if (AGENT_RUNTIME_ARN && fixResult.filesModified?.length) {
-    try {
-      const syncResult = await invokeSyncAll(syncConfig, {
-        operation: 'sync_all',
-        actorId: slackContext.user_id,
-      });
+    invokeSyncAll(syncConfig, {
+      operation: 'sync_all',
+      actorId: slackContext.user_id,
+    }).then(syncResult => {
       log('info', 'Fix post-commit sync completed', { 
         event_id: eventId, 
         items_synced: syncResult.itemsSynced,
         success: syncResult.success,
       });
-    } catch (err) {
+    }).catch(err => {
       log('warn', 'Fix post-commit sync failed', { event_id: eventId, error: err instanceof Error ? err.message : 'Unknown' });
-    }
+    });
   }
 
   await markCompleted(idempotencyConfig, eventId);
@@ -1647,23 +1647,26 @@ async function executeAndFinalize(
   }
 
   if (result.success) {
-    // Sync to Memory after ANY successful commit
-    // This ensures Memory stays consistent with CodeCommit
-    // Note: We await this to ensure it completes before Lambda freezes
+    // Notify classifier of commit for background sync to Memory
+    // This is fire-and-forget - doesn't block the response
+    // The classifier handles Memory sync internally
     // Validates: Requirements 1.1, 1.5
-    if (AGENT_RUNTIME_ARN && result.filesModified?.length) {
-      try {
-        const syncResult = await invokeSyncAll(syncConfig, {
-          operation: 'sync_all',
+    if (AGENT_RUNTIME_ARN && result.filesModified?.length && result.commitId) {
+      // Get the file content from the action plan
+      const fileOp = actionPlan.file_operations?.[0];
+      if (fileOp && fileOp.content) {
+        // Fire-and-forget: invokeSyncItem doesn't throw, just logs errors
+        invokeSyncItem(syncConfig, {
+          operation: 'sync_item',
           actorId: slackContext.user_id,
+          itemPath: result.filesModified[0],
+          itemContent: fileOp.content,
+          commitId: result.commitId,
         });
-        log('info', 'Post-commit sync completed', { 
+        log('info', 'Post-commit sync initiated (non-blocking)', { 
           event_id: eventId, 
-          items_synced: syncResult.itemsSynced,
-          success: syncResult.success,
+          file_path: result.filesModified[0],
         });
-      } catch (err) {
-        log('warn', 'Post-commit sync failed', { event_id: eventId, error: err instanceof Error ? err.message : 'Unknown' });
       }
     }
 
@@ -1997,24 +2000,23 @@ async function processSingleItem(
     }
   }
 
-  // Sync to Memory after ANY successful commit
-  // This ensures Memory stays consistent with CodeCommit
-  // Note: We await this to ensure it completes before Lambda freezes
+  // Notify classifier of commit for background sync (fire-and-forget)
   // Validates: Requirements 1.1, 1.5
-  if (AGENT_RUNTIME_ARN && result.filesModified?.length) {
-    try {
-      const syncResult = await invokeSyncAll(syncConfig, {
-        operation: 'sync_all',
+  if (AGENT_RUNTIME_ARN && result.filesModified?.length && result.commitId) {
+    const fileOp = actionPlan.file_operations?.[0];
+    if (fileOp && fileOp.content) {
+      invokeSyncItem(syncConfig, {
+        operation: 'sync_item',
         actorId: slackContext.user_id,
+        itemPath: result.filesModified[0],
+        itemContent: fileOp.content,
+        commitId: result.commitId,
       });
-      log('info', 'Multi-item post-commit sync completed', { 
+      log('info', 'Multi-item post-commit sync initiated (non-blocking)', { 
         event_id: eventId, 
         item_index: itemIndex,
-        items_synced: syncResult.itemsSynced,
-        success: syncResult.success,
+        file_path: result.filesModified[0],
       });
-    } catch (err) {
-      log('warn', 'Multi-item post-commit sync failed', { event_id: eventId, item_index: itemIndex, error: err instanceof Error ? err.message : 'Unknown' });
     }
   }
 
