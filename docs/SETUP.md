@@ -467,11 +467,11 @@ Memory is automatically provisioned during deployment. Items are synced from Cod
 Configure the classifier model at deploy time:
 
 ```bash
-# Nova Lite (default, good balance)
+# Nova Micro (default, cheapest)
 ./scripts/deploy.sh --sender-email you@example.com
 
-# Nova Micro (cheapest)
-./scripts/deploy.sh --sender-email you@example.com --model amazon.nova-micro-v1:0
+# Nova Lite (good balance)
+./scripts/deploy.sh --sender-email you@example.com --model amazon.nova-lite-v1:0
 
 # Claude Haiku (best quality)
 ./scripts/deploy.sh --sender-email you@example.com --model anthropic.claude-3-5-haiku-20241022-v1:0
@@ -479,5 +479,5 @@ Configure the classifier model at deploy time:
 
 Or via CDK context:
 ```bash
-npx cdk deploy --all -c classifierModel=amazon.nova-micro-v1:0
+npx cdk deploy --all -c classifierModel=amazon.nova-lite-v1:0
 ```
