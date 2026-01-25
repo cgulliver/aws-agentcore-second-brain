@@ -39,6 +39,7 @@ class ItemMetadata:
     path: str            # e.g., "30-projects/2025-01-18__home-landscaping__sb-a7f3c2d.md"
     tags: List[str] = field(default_factory=list)  # e.g., ["landscaping", "home"]
     status: Optional[str] = None  # For projects: "active", "on-hold", "complete", "cancelled"
+    created_at: Optional[str] = None  # ISO-8601 creation date from front matter
     
     def to_memory_text(self, synced_at: str = None) -> str:
         """
@@ -65,6 +66,8 @@ class ItemMetadata:
             f"Type: {self.item_type}",
             f"Path: {self.path}",
         ]
+        if self.created_at:
+            lines.append(f"Created: {self.created_at}")
         if self.tags:
             lines.append(f"Tags: {', '.join(self.tags)}")
         if self.status:
@@ -311,6 +314,7 @@ class ItemSyncModule:
             tags = []
         
         status = front_matter.get('status') if item_type == 'project' else None
+        created_at = front_matter.get('created_at')
         
         return ItemMetadata(
             sb_id=sb_id,
@@ -319,6 +323,7 @@ class ItemSyncModule:
             path=file_path,
             tags=tags,
             status=status,
+            created_at=created_at,
         )
 
     
