@@ -381,6 +381,21 @@ export class CoreStack extends cdk.Stack {
       })
     );
 
+    // Grant AgentCore role SSM access for sync marker (delta sync)
+    agentCoreRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'SyncMarkerSSM',
+        effect: iam.Effect.ALLOW,
+        actions: [
+          'ssm:GetParameter',
+          'ssm:PutParameter',
+        ],
+        resources: [
+          `arn:aws:ssm:${this.region}:${this.account}:parameter/second-brain/last-sync-commit`,
+        ],
+      })
+    );
+
     // Grant AgentCore role read access to CodeCommit for use_aws tool
     // This allows the classifier to read projects folder to match implicit references
     agentCoreRole.addToPolicy(
@@ -403,7 +418,7 @@ export class CoreStack extends cdk.Stack {
     // Validates: Requirements 1.1, 2.1, 3.1, 5.1 (Memory-Repo Sync)
     // =========================================================================
     
-    // SSM Parameter for sync marker (must be defined before sync Lambda)
+    // SSM Parameter for sync marker (must be defined before sync Lambda and AgentCore runtime)
     const syncMarkerParam = new ssm.StringParameter(this, 'SyncMarkerParam', {
       parameterName: '/second-brain/last-sync-commit',
       description: 'Last CodeCommit commit ID synced to Memory (for delta sync)',
@@ -499,6 +514,7 @@ export class CoreStack extends cdk.Stack {
           MEMORY_ID: agentMemory.getAtt('MemoryId').toString(),
           MODEL_ID: classifierModel,
           REASONING_EFFORT: reasoningEffort,
+          SYNC_MARKER_PARAM: syncMarkerParam.parameterName,
         },
       },
     });
