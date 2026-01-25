@@ -266,10 +266,10 @@ export class CoreStack extends cdk.Stack {
     // =========================================================================
 
     // Classifier Model Selection
-    // Default: Nova Micro (~$0.035/1M input) - 99% cheaper than Claude Sonnet 4
+    // Default: Nova 2 Lite - best balance of cost, quality, and 1M context window
     // Options: amazon.nova-micro-v1:0, amazon.nova-lite-v1:0, anthropic.claude-3-5-haiku-20241022-v1:0
     // Nova 2: global.amazon.nova-2-lite-v1:0 (supports extended thinking)
-    const classifierModel = this.node.tryGetContext('classifierModel') || 'amazon.nova-micro-v1:0';
+    const classifierModel = this.node.tryGetContext('classifierModel') || 'global.amazon.nova-2-lite-v1:0';
     
     // Nova 2 Extended Thinking (reasoning) configuration
     // Options: disabled (default), low, medium, high

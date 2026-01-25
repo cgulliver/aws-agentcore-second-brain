@@ -342,7 +342,7 @@ Note: The current implementation uses AWS CodeCommit for the knowledge repositor
 |-----|-------------|---------|
 | `senderEmail` | SES sender address | `noreply@example.com` |
 | `securityMode` | Ingress security mode | `mtls-hmac` |
-| `classifierModel` | Bedrock model for classification | `amazon.nova-micro-v1:0` |
+| `classifierModel` | Bedrock model for classification | `global.amazon.nova-2-lite-v1:0` |
 | `reasoningEffort` | Nova 2 extended thinking level | `disabled` |
 
 ### Model Selection
@@ -350,25 +350,25 @@ Note: The current implementation uses AWS CodeCommit for the knowledge repositor
 The classifier model can be configured at deploy time for cost/capability tradeoffs:
 
 ```bash
-# Use default (Nova Micro - cheapest)
+# Use default (Nova 2 Lite - best balance)
 npx cdk deploy SecondBrainCoreStack
 
-# Use Nova 2 Lite (best balance, supports extended thinking)
-npx cdk deploy SecondBrainCoreStack -c classifierModel=global.amazon.nova-2-lite-v1:0
+# Use Nova Micro (cheapest, simple classification only)
+npx cdk deploy SecondBrainCoreStack -c classifierModel=amazon.nova-micro-v1:0
 
 # Use Nova 2 Lite with reasoning enabled
 npx cdk deploy SecondBrainCoreStack -c classifierModel=global.amazon.nova-2-lite-v1:0 -c reasoningEffort=low
 
-# Use Claude Haiku (alternative high-quality option)
+# Use Claude Haiku (highest quality, 20x cost)
 npx cdk deploy SecondBrainCoreStack -c classifierModel=anthropic.claude-3-5-haiku-20241022-v1:0
 ```
 
-| Model | Model ID | Notes |
-|-------|----------|-------|
-| Nova Micro | `amazon.nova-micro-v1:0` | Fastest, lowest cost |
-| Nova Lite | `amazon.nova-lite-v1:0` | Good balance |
-| Nova 2 Lite | `global.amazon.nova-2-lite-v1:0` | Best balance, 1M context, extended thinking |
-| Claude 3.5 Haiku | `anthropic.claude-3-5-haiku-20241022-v1:0` | Higher capability, higher cost |
+| Model | Model ID | Cost (input/output) | Notes |
+|-------|----------|---------------------|-------|
+| Nova 2 Lite | `global.amazon.nova-2-lite-v1:0` | $0.04/$0.16 per 1M | Default, 1M context, extended thinking |
+| Nova Micro | `amazon.nova-micro-v1:0` | $0.035/$0.14 per 1M | Fastest, simple classification |
+| Nova Lite | `amazon.nova-lite-v1:0` | $0.06/$0.24 per 1M | Legacy option |
+| Claude 3.5 Haiku | `anthropic.claude-3-5-haiku-20241022-v1:0` | $0.80/$4.00 per 1M | Highest quality |
 
 **Nova 2 Lite Extended Thinking:** Enable step-by-step reasoning with `reasoningEffort`:
 - `disabled` (default) - Fast responses, no reasoning overhead
