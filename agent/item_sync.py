@@ -481,6 +481,10 @@ class ItemSyncModule:
             # Format item as text for storage
             item_text = item.to_memory_text()
             
+            # Debug: Log what we're storing
+            print(f"Debug: Storing item {item.sb_id} with created_at={item.created_at}")
+            print(f"Debug: Memory text:\n{item_text}")
+            
             # Use the gmdp_client's batch_create_memory_records API
             # This bypasses strategy processing and stores directly
             response = self.memory_client.gmdp_client.batch_create_memory_records(
