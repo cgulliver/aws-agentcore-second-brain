@@ -67,11 +67,11 @@ docker --version  # or: finch --version
 
 The Second Brain Agent supports three security modes for the Slack webhook ingress:
 
-| Mode | Security Level | Requirements | Use Case |
-|------|---------------|--------------|----------|
-| `mtls-hmac` | Highest | Custom domain, ACM cert, Route 53, Signing secret | Production (recommended) |
-| `mtls-only` | High | Custom domain, ACM cert, Route 53 | When HMAC overhead is undesirable |
-| `hmac-only` | Standard | Signing secret only | Quick setup, development |
+| Mode | Requirements | Use Case |
+|------|--------------|----------|
+| `mtls-hmac` | Custom domain, ACM cert, Route 53, Signing secret | Production (recommended) |
+| `mtls-only` | Custom domain, ACM cert, Route 53 | When HMAC overhead is undesirable |
+| `hmac-only` | Signing secret only | Quick setup, development |
 
 ### mtls-hmac (Default, Recommended)
 

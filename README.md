@@ -210,11 +210,11 @@ npm install
 
 ### Security Modes
 
-| Mode | Security | Requirements |
-|------|----------|--------------|
-| `mtls-hmac` | Highest | Custom domain + Route 53 hosted zone + ACM cert |
-| `mtls-only` | High | Custom domain + Route 53 hosted zone + ACM cert |
-| `hmac-only` | Standard | No domain required (uses Lambda Function URL) |
+| Mode | Requirements |
+|------|--------------|
+| `mtls-hmac` | Custom domain + Route 53 hosted zone + ACM cert |
+| `mtls-only` | Custom domain + Route 53 hosted zone + ACM cert |
+| `hmac-only` | No domain required (uses Lambda Function URL) |
 
 **Note:** mTLS modes require a domain you control with DNS hosted in Route 53. If you don't have a custom domain, use `hmac-only` mode - it's still secure (HMAC signature verification) and simpler to set up.
 
