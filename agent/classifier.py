@@ -149,19 +149,21 @@ def search_memory_for_items(user_id: str, message: str) -> list:
         
         client = MemoryClient(region_name=AWS_REGION)
         
-        # Detect if this is a project status query that needs ALL projects
+        # Detect if this is a query that needs ALL items (not just semantic matches)
         message_lower = message.lower()
-        is_status_query = any(term in message_lower for term in [
+        is_broad_query = any(term in message_lower for term in [
             'status', 'health', 'my projects', 'all projects', 
             'which project', 'what project', 'on hold', 'on-hold',
             'active', 'complete', 'cancelled', 'priorities', 'priority',
-            'report', 'overview', 'summary'
+            'report', 'overview', 'summary', 'list all', 'show all',
+            'all my', 'what ideas', 'which ideas', 'my ideas',
+            'what decisions', 'which decisions', 'my decisions'
         ])
         
-        # For status queries, use a broader search term to get all items
-        search_query = "project idea decision status" if is_status_query else message
+        # For broad queries, use a generic search term to get all items
+        search_query = "project idea decision status" if is_broad_query else message
         
-        print(f"Debug: search_memory_for_items - is_status_query={is_status_query}, search_query={search_query[:50]}")
+        print(f"Debug: search_memory_for_items - is_broad_query={is_broad_query}, search_query={search_query[:50]}")
         
         # Search for items in the /items/{actor_id} namespace
         # Items are stored directly via batch_create_memory_records (not via strategies)
