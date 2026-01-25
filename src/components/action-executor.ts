@@ -63,6 +63,7 @@ export interface ExecutionResult {
   slackReplyTs?: string;
   emailMessageId?: string;
   filesModified?: string[];
+  fileContents?: string[];  // Final content with front matter (for sync)
   error?: string;
   validationErrors?: string[];
   completedSteps: CompletedSteps;
@@ -577,17 +578,18 @@ async function executeCodeCommitOperations(
   config: KnowledgeStoreConfig,
   plan: ActionPlan,
   slackContext?: SlackContext
-): Promise<{ commit: CommitResult | null; sbId: string | null; filePath: string | null }> {
+): Promise<{ commit: CommitResult | null; sbId: string | null; filePath: string | null; finalContent: string | null }> {
   // Ensure file_operations exists
   const normalizedPlan = ensureFileOperations(plan);
   
   if (normalizedPlan.file_operations.length === 0) {
-    return { commit: null, sbId: null, filePath: null };
+    return { commit: null, sbId: null, filePath: null, finalContent: null };
   }
 
   let lastCommit: CommitResult | null = null;
   let generatedSbId: string | null = null;
   let primaryFilePath: string | null = null;
+  let finalContent: string | null = null;
 
   for (const op of normalizedPlan.file_operations) {
     const parentCommitId = await getLatestCommitId(config);
@@ -621,6 +623,7 @@ async function executeCodeCommitOperations(
       );
       contentToWrite = contentWithFrontMatter;
       generatedSbId = sbId;
+      finalContent = contentWithFrontMatter;  // Save for sync
       
       // Replace any sb-xxxxxxx placeholder pattern in path with actual SB_ID
       // Handles: PLACEHOLDER, sb-xxxxxxx, sb-zzzzzz, or any sb-[a-z0-9]+ pattern
@@ -660,7 +663,7 @@ async function executeCodeCommitOperations(
     }
   }
 
-  return { commit: lastCommit, sbId: generatedSbId, filePath: primaryFilePath };
+  return { commit: lastCommit, sbId: generatedSbId, filePath: primaryFilePath, finalContent };
 }
 
 /**
@@ -1143,6 +1146,7 @@ export async function executeActionPlan(
   let commitResult: CommitResult | null = null;
   let generatedSbId: string | null = null;
   let primaryFilePath: string | null = null;
+  let finalContent: string | null = null;
   let emailMessageId: string | null = null;
   let projectEmailId: string | null = null;
   let slackReplyTs: string | null = null;
@@ -1159,6 +1163,7 @@ export async function executeActionPlan(
       commitResult = ccResult.commit;
       generatedSbId = ccResult.sbId;
       primaryFilePath = ccResult.filePath;
+      finalContent = ccResult.finalContent;
       completedSteps.codecommit = true;
 
       await updateExecutionState(config.idempotency, eventId, {
@@ -1285,6 +1290,9 @@ export async function executeActionPlan(
       ? [primaryFilePath] 
       : (plan.file_operations || []).map((op) => op.path);
 
+    // Get final content for sync (only available for items with front matter)
+    const fileContents = finalContent ? [finalContent] : undefined;
+
     return {
       success: true,
       commitId: commitResult?.commitId,
@@ -1292,6 +1300,7 @@ export async function executeActionPlan(
       slackReplyTs: slackReplyTs || undefined,
       emailMessageId: emailMessageId || undefined,
       filesModified: actualFilesModified,
+      fileContents,
       completedSteps,
     };
   } catch (error) {

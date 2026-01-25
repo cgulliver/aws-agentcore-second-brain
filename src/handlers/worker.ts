@@ -1651,23 +1651,19 @@ async function executeAndFinalize(
     // This is fire-and-forget - doesn't block the response
     // The classifier handles Memory sync internally
     // Validates: Requirements 1.1, 1.5
-    if (AGENT_RUNTIME_ARN && result.filesModified?.length && result.commitId) {
-      // Get the file content from the action plan
-      const fileOp = actionPlan.file_operations?.[0];
-      if (fileOp && fileOp.content) {
-        // Fire-and-forget: invokeSyncItem doesn't throw, just logs errors
-        invokeSyncItem(syncConfig, {
-          operation: 'sync_item',
-          actorId: slackContext.user_id,
-          itemPath: result.filesModified[0],
-          itemContent: fileOp.content,
-          commitId: result.commitId,
-        });
-        log('info', 'Post-commit sync initiated (non-blocking)', { 
-          event_id: eventId, 
-          file_path: result.filesModified[0],
-        });
-      }
+    if (AGENT_RUNTIME_ARN && result.filesModified?.length && result.commitId && result.fileContents?.length) {
+      // Fire-and-forget: invokeSyncItem doesn't throw, just logs errors
+      invokeSyncItem(syncConfig, {
+        operation: 'sync_item',
+        actorId: slackContext.user_id,
+        itemPath: result.filesModified[0],
+        itemContent: result.fileContents[0],
+        commitId: result.commitId,
+      });
+      log('info', 'Post-commit sync initiated (non-blocking)', { 
+        event_id: eventId, 
+        file_path: result.filesModified[0],
+      });
     }
 
     await markCompleted(idempotencyConfig, eventId, result.commitId, result.receiptCommitId);
@@ -2002,22 +1998,19 @@ async function processSingleItem(
 
   // Notify classifier of commit for background sync (fire-and-forget)
   // Validates: Requirements 1.1, 1.5
-  if (AGENT_RUNTIME_ARN && result.filesModified?.length && result.commitId) {
-    const fileOp = actionPlan.file_operations?.[0];
-    if (fileOp && fileOp.content) {
-      invokeSyncItem(syncConfig, {
-        operation: 'sync_item',
-        actorId: slackContext.user_id,
-        itemPath: result.filesModified[0],
-        itemContent: fileOp.content,
-        commitId: result.commitId,
-      });
-      log('info', 'Multi-item post-commit sync initiated (non-blocking)', { 
-        event_id: eventId, 
-        item_index: itemIndex,
-        file_path: result.filesModified[0],
-      });
-    }
+  if (AGENT_RUNTIME_ARN && result.filesModified?.length && result.commitId && result.fileContents?.length) {
+    invokeSyncItem(syncConfig, {
+      operation: 'sync_item',
+      actorId: slackContext.user_id,
+      itemPath: result.filesModified[0],
+      itemContent: result.fileContents[0],
+      commitId: result.commitId,
+    });
+    log('info', 'Multi-item post-commit sync initiated (non-blocking)', { 
+      event_id: eventId, 
+      item_index: itemIndex,
+      file_path: result.filesModified[0],
+    });
   }
 
   return {
