@@ -269,6 +269,7 @@ def _parse_memory_item_to_metadata(content: str):
         path = None
         tags = []
         status = None
+        created_at = None
         
         for line in lines:
             if line.startswith('Item: '):
@@ -284,6 +285,8 @@ def _parse_memory_item_to_metadata(content: str):
                 tags = [t.strip() for t in tags_str.split(',') if t.strip()]
             elif line.startswith('Status: '):
                 status = line[8:].strip()
+            elif line.startswith('Created: '):
+                created_at = line[9:].strip()
         
         # Validate required fields
         if not all([title, sb_id, item_type, path]):
@@ -296,13 +299,14 @@ def _parse_memory_item_to_metadata(content: str):
         # Create a simple object with the metadata attributes
         # We use a simple class to avoid circular import with item_sync
         class ParsedItemMetadata:
-            def __init__(self, sb_id, title, item_type, path, tags, status):
+            def __init__(self, sb_id, title, item_type, path, tags, status, created_at=None):
                 self.sb_id = sb_id
                 self.title = title
                 self.item_type = item_type
                 self.path = path
                 self.tags = tags
                 self.status = status
+                self.created_at = created_at
         
         return ParsedItemMetadata(
             sb_id=sb_id,
@@ -311,6 +315,7 @@ def _parse_memory_item_to_metadata(content: str):
             path=path,
             tags=tags,
             status=status,
+            created_at=created_at,
         )
         
     except Exception as e:
@@ -787,7 +792,8 @@ async def invoke(payload=None):
                     for item in items:
                         status_str = f" (status: {item.status})" if item.status else ""
                         tags_str = f" [tags: {', '.join(item.tags)}]" if item.tags else ""
-                        context_lines.append(f"- {item.item_type}: \"{item.title}\" (sb_id: {item.sb_id}){status_str}{tags_str}")
+                        created_str = f" (created: {item.created_at})" if getattr(item, 'created_at', None) else ""
+                        context_lines.append(f"- {item.item_type}: \"{item.title}\" (sb_id: {item.sb_id}){created_str}{status_str}{tags_str}")
                     item_context = "\n".join(context_lines)
                     print(f"Info: Injected {len(items)} items into context")
                     # Debug: Print the actual items being injected
