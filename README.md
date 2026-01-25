@@ -1,4 +1,4 @@
-# Second Brain Agent
+# AWS AgentCore Second Brain
 
 > A personal knowledge capture system that turns Slack DMs into organized notes, decisions, and tasks.
 
