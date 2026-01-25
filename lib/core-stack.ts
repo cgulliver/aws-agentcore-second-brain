@@ -417,9 +417,14 @@ export class CoreStack extends cdk.Stack {
       environment: {
         MEMORY_ID: agentMemory.getAtt('MemoryId').toString(),
         KNOWLEDGE_REPO_NAME: this.repository.repositoryName,
+        SYNC_MARKER_PARAM: syncMarkerParam.parameterName,
         // Note: AWS_REGION is automatically set by Lambda runtime
       },
     });
+
+    // Grant SSM read/write for sync marker
+    syncMarkerParam.grantRead(syncLambda);
+    syncMarkerParam.grantWrite(syncLambda);
 
     // Task 11.2: Grant permissions to Sync Lambda
     // Grant CodeCommit read access for reading items during sync
@@ -571,6 +576,18 @@ export class CoreStack extends cdk.Stack {
       parameterName: '/second-brain/conversation-ttl-seconds',
       description: 'TTL for conversation context records in seconds (default: 3600 = 1 hour)',
       stringValue: '3600',
+      tier: ssm.ParameterTier.STANDARD,
+    });
+
+    // =========================================================================
+    // Task 3.13: SSM Parameter for Memory Sync Marker
+    // Tracks last synced commit ID for delta sync
+    // =========================================================================
+    
+    const syncMarkerParam = new ssm.StringParameter(this, 'SyncMarkerParam', {
+      parameterName: '/second-brain/last-sync-commit',
+      description: 'Last CodeCommit commit ID synced to Memory (for delta sync)',
+      stringValue: 'initial', // Will be updated by sync process
       tier: ssm.ParameterTier.STANDARD,
     });
 

@@ -26,6 +26,7 @@ export interface StatusUpdateResult {
   error?: string;
   previousStatus?: ProjectStatus;
   newStatus?: ProjectStatus;
+  updatedContent?: string;
 }
 
 // Parsed front matter result
@@ -278,6 +279,7 @@ export async function updateProjectStatus(
       commitId: result.commitId,
       previousStatus,
       newStatus,
+      updatedContent,
     };
   } catch (error) {
     return {

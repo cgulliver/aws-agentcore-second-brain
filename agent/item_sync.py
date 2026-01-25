@@ -108,21 +108,24 @@ class ItemSyncModule:
         '30-projects': 'project',
     }
     
-    def __init__(self, memory_id: str, region: str = 'us-east-1'):
+    def __init__(self, memory_id: str, region: str = 'us-east-1', sync_marker_param: str = None):
         """
         Initialize the sync module.
         
         Args:
             memory_id: AgentCore Memory ID
             region: AWS region
+            sync_marker_param: SSM parameter name for sync marker (optional)
         """
         self.memory_id = memory_id
         self.region = region
         self.repo_name = os.getenv('KNOWLEDGE_REPO_NAME', 'second-brain-knowledge')
+        self.sync_marker_param = sync_marker_param or os.getenv('SYNC_MARKER_PARAM', '/second-brain/last-sync-commit')
         
         # Initialize clients lazily
         self._memory_client = None
         self._codecommit_client = None
+        self._ssm_client = None
     
     @property
     def memory_client(self):
@@ -136,6 +139,38 @@ class ItemSyncModule:
         """Lazy initialization of CodeCommit client."""
         if self._codecommit_client is None:
             self._codecommit_client = boto3.client('codecommit', region_name=self.region)
+        return self._codecommit_client
+    
+    @property
+    def ssm_client(self):
+        """Lazy initialization of SSM client."""
+        if self._ssm_client is None:
+            self._ssm_client = boto3.client('ssm', region_name=self.region)
+        return self._ssm_client
+    
+    def get_sync_marker(self) -> Optional[str]:
+        """Get the last synced commit ID from SSM."""
+        try:
+            response = self.ssm_client.get_parameter(Name=self.sync_marker_param)
+            value = response['Parameter']['Value']
+            return None if value == 'initial' else value
+        except Exception as e:
+            print(f"Warning: Failed to get sync marker: {e}")
+            return None
+    
+    def set_sync_marker(self, commit_id: str) -> bool:
+        """Update the sync marker in SSM."""
+        try:
+            self.ssm_client.put_parameter(
+                Name=self.sync_marker_param,
+                Value=commit_id,
+                Type='String',
+                Overwrite=True
+            )
+            return True
+        except Exception as e:
+            print(f"Warning: Failed to set sync marker: {e}")
+            return False
         return self._codecommit_client
     
     def parse_front_matter(self, content: str) -> Optional[dict]:
@@ -763,8 +798,8 @@ class ItemSyncModule:
         """
         Sync all items from CodeCommit to Memory for the given actor.
         
-        Always performs a full sync since the item count is small (<100 items)
-        and this ensures Memory stays consistent with CodeCommit.
+        Uses delta sync when possible - only syncs files changed since last sync.
+        Falls back to full sync if no sync marker exists.
         
         Args:
             actor_id: User/actor ID for scoped storage
@@ -783,26 +818,82 @@ class ItemSyncModule:
                     error="Failed to get CodeCommit HEAD commit",
                 )
             
-            # Always do full sync - item count is small and this ensures consistency
-            all_files = self._get_all_item_files(head_commit)
+            # Get last synced commit from SSM
+            last_sync_commit = self.get_sync_marker()
             
-            items_synced = 0
+            # Determine if we can do delta sync
+            if last_sync_commit and last_sync_commit != head_commit:
+                # Delta sync - only process changed files
+                changed_files = self.get_changed_files(last_sync_commit, head_commit)
+                print(f"Delta sync: {len(changed_files)} files changed since {last_sync_commit[:7]}")
+                
+                items_synced = 0
+                items_deleted = 0
+                
+                for file_info in changed_files:
+                    path = file_info['path']
+                    change_type = file_info.get('change_type', 'M')
+                    
+                    if change_type == 'D':
+                        # File deleted - remove from Memory
+                        sb_id_match = path.split('/')[-1].replace('.md', '')
+                        if sb_id_match.startswith('sb-'):
+                            if self.delete_item_from_memory(actor_id, sb_id_match):
+                                items_deleted += 1
+                    else:
+                        # File added or modified - sync to Memory
+                        content = self.get_file_content(path, head_commit)
+                        if content:
+                            metadata = self.extract_item_metadata(path, content)
+                            if metadata:
+                                if self.store_item_in_memory(actor_id, metadata):
+                                    items_synced += 1
+                
+                # Update sync marker
+                self.set_sync_marker(head_commit)
+                
+                return SyncResult(
+                    success=True,
+                    items_synced=items_synced,
+                    items_deleted=items_deleted,
+                    new_commit_id=head_commit,
+                )
             
-            for file_info in all_files:
-                path = file_info['path']
-                content = self.get_file_content(path, head_commit)
-                if content:
-                    metadata = self.extract_item_metadata(path, content)
-                    if metadata:
-                        if self.store_item_in_memory(actor_id, metadata):
-                            items_synced += 1
+            elif last_sync_commit == head_commit:
+                # Already in sync - nothing to do
+                print(f"Already in sync at {head_commit[:7]}")
+                return SyncResult(
+                    success=True,
+                    items_synced=0,
+                    items_deleted=0,
+                    new_commit_id=head_commit,
+                )
             
-            return SyncResult(
-                success=True,
-                items_synced=items_synced,
-                items_deleted=0,
-                new_commit_id=head_commit,
-            )
+            else:
+                # No sync marker - do full sync
+                print(f"Full sync (no marker): syncing all items to {head_commit[:7]}")
+                all_files = self._get_all_item_files(head_commit)
+                
+                items_synced = 0
+                
+                for file_info in all_files:
+                    path = file_info['path']
+                    content = self.get_file_content(path, head_commit)
+                    if content:
+                        metadata = self.extract_item_metadata(path, content)
+                        if metadata:
+                            if self.store_item_in_memory(actor_id, metadata):
+                                items_synced += 1
+                
+                # Set initial sync marker
+                self.set_sync_marker(head_commit)
+                
+                return SyncResult(
+                    success=True,
+                    items_synced=items_synced,
+                    items_deleted=0,
+                    new_commit_id=head_commit,
+                )
             
         except Exception as e:
             return SyncResult(
@@ -810,4 +901,4 @@ class ItemSyncModule:
                 error=str(e),
             )
 
-# Force rebuild Sat Jan 24 16:28:09 EST 2026
+# Force rebuild Sun Jan 25 14:30:00 EST 2026
