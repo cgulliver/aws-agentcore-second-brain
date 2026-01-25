@@ -154,7 +154,8 @@ def search_memory_for_items(user_id: str, message: str) -> list:
         is_list_all_query = any(term in message_lower for term in [
             'list all', 'show all', 'all my', 'what ideas', 'which ideas', 
             'my ideas', 'what decisions', 'which decisions', 'my decisions',
-            'all projects', 'my projects', 'what projects', 'which projects'
+            'all projects', 'my projects', 'what projects', 'which projects',
+            'when did i', 'when was'  # Date queries need full item context
         ])
         
         is_broad_query = is_list_all_query or any(term in message_lower for term in [
