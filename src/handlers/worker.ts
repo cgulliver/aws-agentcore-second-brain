@@ -474,9 +474,9 @@ function isHealthCommand(messageText: string): boolean {
 function formatHealthReportForSlack(healthReport: HealthReport): string {
   const lines: string[] = ['📊 *Sync Health Report*', ''];
 
-  // Item counts
+  // Item counts - Memory shows "records" since it includes historical events
   lines.push(`CodeCommit: ${healthReport.codecommitCount} items`);
-  lines.push(`Memory: ${healthReport.memoryCount} items`);
+  lines.push(`Memory: ${healthReport.memoryCount} records`);
 
   // Sync status with emoji
   if (healthReport.inSync) {
