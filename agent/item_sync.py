@@ -510,10 +510,7 @@ class ItemSyncModule:
     
     def delete_item_from_memory(self, actor_id: str, sb_id: str) -> bool:
         """
-        Delete item from Memory.
-        
-        Note: AgentCore Memory may not support direct deletion.
-        This is a placeholder for future implementation.
+        Delete a single item from Memory by its record ID.
         
         Args:
             actor_id: User/actor ID
@@ -524,10 +521,97 @@ class ItemSyncModule:
             
         Validates: Requirements 6.4
         """
-        # AgentCore Memory doesn't have a direct delete API
-        # Items will naturally expire based on EventExpiryDuration
-        # For now, we log the deletion intent
-        print(f"Info: Item {sb_id} marked for deletion (will expire naturally)")
+        if not self.memory_client:
+            return False
+        
+        try:
+            # First, find the memory record ID for this sb_id
+            namespace = f'/items/{actor_id}'
+            response = self.memory_client.gmdp_client.list_memory_records(
+                memoryId=self.memory_id,
+                namespace=namespace,
+                maxResults=100,
+            )
+            
+            record_ids_to_delete = []
+            for record in response.get('memoryRecordSummaries', []):
+                content = record.get('content', {})
+                if isinstance(content, dict):
+                    content = content.get('text', '')
+                if f'ID: {sb_id}' in content:
+                    record_id = record.get('memoryRecordId')
+                    if record_id:
+                        record_ids_to_delete.append(record_id)
+            
+            if not record_ids_to_delete:
+                print(f"Info: No memory records found for {sb_id}")
+                return True
+            
+            # Delete the records
+            self.memory_client.gmdp_client.batch_delete_memory_records(
+                memoryId=self.memory_id,
+                records=[{'memoryRecordId': rid} for rid in record_ids_to_delete]
+            )
+            print(f"Info: Deleted {len(record_ids_to_delete)} memory record(s) for {sb_id}")
+            return True
+            
+        except Exception as e:
+            print(f"Warning: Failed to delete item {sb_id}: {e}")
+            return False
+    
+    def clear_all_memory_records(self, actor_id: str) -> int:
+        """
+        Delete ALL memory records for an actor.
+        
+        Used by rebuild to clear stale records before resyncing.
+        
+        Args:
+            actor_id: User/actor ID
+            
+        Returns:
+            Number of records deleted
+        """
+        if not self.memory_client:
+            return 0
+        
+        try:
+            namespace = f'/items/{actor_id}'
+            deleted_count = 0
+            
+            # List all records in the namespace
+            response = self.memory_client.gmdp_client.list_memory_records(
+                memoryId=self.memory_id,
+                namespace=namespace,
+                maxResults=100,
+            )
+            
+            record_ids = []
+            for record in response.get('memoryRecordSummaries', []):
+                record_id = record.get('memoryRecordId')
+                if record_id:
+                    record_ids.append(record_id)
+            
+            if not record_ids:
+                print("Info: No memory records to clear")
+                return 0
+            
+            # Delete in batches of 25 (API limit)
+            batch_size = 25
+            for i in range(0, len(record_ids), batch_size):
+                batch = record_ids[i:i + batch_size]
+                self.memory_client.gmdp_client.batch_delete_memory_records(
+                    memoryId=self.memory_id,
+                    records=[{'memoryRecordId': rid} for rid in batch]
+                )
+                deleted_count += len(batch)
+                print(f"Info: Deleted batch of {len(batch)} records")
+            
+            print(f"Info: Cleared {deleted_count} total memory records for actor {actor_id}")
+            return deleted_count
+            
+        except Exception as e:
+            print(f"Warning: Failed to clear memory records: {e}")
+            return 0
         return True
 
     def sync_single_item(self, actor_id: str, file_path: str, content: str, commit_id: str = None) -> SyncResult:

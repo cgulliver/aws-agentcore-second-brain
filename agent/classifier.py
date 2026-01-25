@@ -1156,6 +1156,11 @@ def _handle_sync_all(sync_module, actor_id: str, payload: dict) -> dict:
         # Check if force full sync requested (rebuild)
         force_full_sync = payload.get('force_full_sync', False)
         if force_full_sync:
+            # Clear all existing memory records first to avoid duplicates
+            print("Force full sync: clearing existing memory records...")
+            deleted_count = sync_module.clear_all_memory_records(actor_id)
+            print(f"Force full sync: cleared {deleted_count} records")
+            
             # Reset sync marker to force full sync
             sync_module.set_sync_marker('initial')
             print("Force full sync: reset sync marker to 'initial'")
