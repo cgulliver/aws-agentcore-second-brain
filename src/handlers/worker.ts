@@ -232,7 +232,8 @@ async function processMessage(message: SQSEventMessage): Promise<void> {
     // Step 2.5: Check for health command
     // Validates: Requirements 5.1
     if (isHealthCommand(message_text)) {
-      await handleHealthCommand(event_id, slackContext);
+      const isRebuild = message_text.trim().toLowerCase() === 'rebuild';
+      await handleHealthCommand(event_id, slackContext, isRebuild);
       return;
     }
 
@@ -461,8 +462,8 @@ async function handleFixCommand(
  * Validates: Requirements 5.1
  */
 function isHealthCommand(messageText: string): boolean {
-  return messageText.trim().toLowerCase() === 'health';
-}
+  const text = messageText.trim().toLowerCase();
+  return text === 'health' || text === 'rebuild';
 
 /**
  * Format health report for Slack reply
@@ -526,17 +527,19 @@ function formatHealthReportForSlack(healthReport: HealthReport): string {
 }
 
 /**
- * Handle health command
+ * Handle health command (or rebuild command)
  * 
- * Invokes the sync Lambda with health_check operation and reports results.
+ * Invokes the classifier with health_check operation and reports results.
+ * If rebuild=true, forces a full sync before health check.
  * 
  * Validates: Requirements 5.1, 5.2, 5.3, 5.4, 5.5, 5.6
  */
 async function handleHealthCommand(
   eventId: string,
-  slackContext: SlackContext
+  slackContext: SlackContext,
+  rebuild: boolean = false
 ): Promise<void> {
-  log('info', 'Processing health command', { event_id: eventId });
+  log('info', rebuild ? 'Processing rebuild command' : 'Processing health command', { event_id: eventId });
 
   await updateExecutionState(idempotencyConfig, eventId, { status: 'EXECUTING' });
 
@@ -555,6 +558,30 @@ async function handleHealthCommand(
       return;
     }
 
+    // If rebuild requested, force full sync first
+    if (rebuild) {
+      await sendSlackReply(
+        { botTokenParam: BOT_TOKEN_PARAM },
+        {
+          channel: slackContext.channel_id,
+          text: '🔄 Rebuilding Memory from CodeCommit...',
+          thread_ts: slackContext.thread_ts,
+        }
+      );
+
+      const syncResult = await invokeSyncAll(syncConfig, {
+        operation: 'sync_all',
+        actorId: slackContext.user_id,
+        forceFullSync: true,
+      });
+
+      log('info', 'Rebuild sync completed', {
+        event_id: eventId,
+        success: syncResult.success,
+        items_synced: syncResult.itemsSynced,
+      });
+    }
+
     // Invoke classifier with health_check operation
     const result = await invokeHealthCheck(syncConfig, {
       operation: 'health_check',
@@ -565,8 +592,11 @@ async function handleHealthCommand(
     let replyText: string;
     if (result.success && result.healthReport) {
       replyText = formatHealthReportForSlack(result.healthReport);
+      if (rebuild) {
+        replyText = '✅ Memory rebuilt successfully\n\n' + replyText;
+      }
     } else {
-      replyText = `❌ Health check failed\nError: ${result.error || 'Unknown error'}`;
+      replyText = `❌ ${rebuild ? 'Rebuild' : 'Health check'} failed\nError: ${result.error || 'Unknown error'}`;
     }
 
     await sendSlackReply(

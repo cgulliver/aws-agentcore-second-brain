@@ -1109,6 +1109,13 @@ def _handle_sync_item(sync_module, actor_id: str, payload: dict) -> dict:
 def _handle_sync_all(sync_module, actor_id: str, payload: dict) -> dict:
     """Handle full sync operation."""
     try:
+        # Check if force full sync requested (rebuild)
+        force_full_sync = payload.get('force_full_sync', False)
+        if force_full_sync:
+            # Reset sync marker to force full sync
+            sync_module.set_sync_marker('initial')
+            print("Force full sync: reset sync marker to 'initial'")
+        
         result = sync_module.sync_items(actor_id)
         return {
             "success": result.success,
