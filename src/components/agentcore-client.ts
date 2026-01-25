@@ -27,6 +27,7 @@ export interface InvocationPayload {
   prompt: string;
   system_prompt: string;
   session_id?: string;
+  user_id?: string;
 }
 
 // Invocation result - can be single or multi-item

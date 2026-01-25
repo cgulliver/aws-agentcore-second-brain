@@ -257,6 +257,7 @@ async function processMessage(message: SQSEventMessage): Promise<void> {
       prompt: message_text,
       system_prompt: systemPrompt.content,
       session_id: `${channel_id}#${user_id}`,
+      user_id: user_id,
     });
 
     // Step 5.5: Check for multi-item response
@@ -396,7 +397,8 @@ async function handleFixCommand(
     agentConfig,
     priorReceipt!,
     instruction,
-    systemPrompt.content
+    systemPrompt.content,
+    slackContext.user_id
   );
 
   if (!fixResult.success) {
@@ -778,6 +780,7 @@ async function handleReclassification(
     prompt: `Classify this as "${targetClassification}": ${originalMessage}`,
     system_prompt: systemPrompt.content,
     session_id: `${slackContext.channel_id}#${slackContext.user_id}`,
+    user_id: slackContext.user_id,
   });
 
   if (!agentResult.success || !agentResult.actionPlan) {
@@ -890,6 +893,7 @@ async function handleClarificationResponse(
     prompt: `Classify this as "${classification}": ${context.original_message}`,
     system_prompt: systemPrompt.content,
     session_id: `${slackContext.channel_id}#${slackContext.user_id}`,
+    user_id: slackContext.user_id,
   });
 
   if (!agentResult.success || !agentResult.actionPlan) {
@@ -1205,6 +1209,7 @@ async function handleQueryIntent(
         prompt: queryPrompt,
         system_prompt: systemPrompt.content,
         session_id: `${slackContext.channel_id}#${slackContext.user_id}`,
+        user_id: slackContext.user_id,
       });
 
       if (agentResult.success && agentResult.actionPlan?.query_response) {

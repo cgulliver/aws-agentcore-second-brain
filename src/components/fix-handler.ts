@@ -205,7 +205,8 @@ export async function applyFix(
   agentConfig: AgentCoreConfig,
   priorReceipt: Receipt,
   instruction: string,
-  systemPrompt: string
+  systemPrompt: string,
+  userId?: string
 ): Promise<FixResult> {
   try {
     // Get the file content that needs to be fixed
@@ -239,6 +240,7 @@ export async function applyFix(
       prompt: fixPrompt,
       system_prompt: systemPrompt,
       session_id: `fix-${priorReceipt.event_id}`,
+      user_id: userId,
     };
 
     const result = await invokeAgentRuntime(agentConfig, payload);
