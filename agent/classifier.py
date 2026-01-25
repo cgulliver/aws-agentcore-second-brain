@@ -151,23 +151,55 @@ def search_memory_for_items(user_id: str, message: str) -> list:
         
         # Detect if this is a query that needs ALL items (not just semantic matches)
         message_lower = message.lower()
-        is_broad_query = any(term in message_lower for term in [
-            'status', 'health', 'my projects', 'all projects', 
-            'which project', 'what project', 'on hold', 'on-hold',
-            'active', 'complete', 'cancelled', 'priorities', 'priority',
-            'report', 'overview', 'summary', 'list all', 'show all',
-            'all my', 'what ideas', 'which ideas', 'my ideas',
-            'what decisions', 'which decisions', 'my decisions'
+        is_list_all_query = any(term in message_lower for term in [
+            'list all', 'show all', 'all my', 'what ideas', 'which ideas', 
+            'my ideas', 'what decisions', 'which decisions', 'my decisions',
+            'all projects', 'my projects', 'what projects', 'which projects'
         ])
         
-        # For broad queries, use a generic search term to get all items
+        is_broad_query = is_list_all_query or any(term in message_lower for term in [
+            'status', 'health', 'on hold', 'on-hold',
+            'active', 'complete', 'cancelled', 'priorities', 'priority',
+            'report', 'overview', 'summary'
+        ])
+        
+        namespace = f'/items/{user_id}'
+        
+        # For "list all" queries, use list_memory_records to get ALL items
+        # For other broad queries, use semantic search with generic terms
+        if is_list_all_query:
+            print(f"Debug: Using list_memory_records for list-all query")
+            response = client.gmdp_client.list_memory_records(
+                memoryId=MEMORY_ID,
+                namespace=namespace,
+                maxResults=100,
+            )
+            
+            if not response:
+                return []
+            
+            items = []
+            summaries = response.get('memoryRecordSummaries', [])
+            print(f"Debug: list_memory_records returned {len(summaries)} records")
+            
+            for record in summaries:
+                content = record.get('content', {})
+                if isinstance(content, dict):
+                    content = content.get('text', '')
+                
+                if 'Last synced commit:' in content:
+                    continue
+                
+                metadata = _parse_memory_item_to_metadata(content)
+                if metadata:
+                    items.append(metadata)
+            
+            return items
+        
+        # For other queries, use semantic search
         search_query = "project idea decision status" if is_broad_query else message
         
         print(f"Debug: search_memory_for_items - is_broad_query={is_broad_query}, search_query={search_query[:50]}")
-        
-        # Search for items in the /items/{actor_id} namespace
-        # Items are stored directly via batch_create_memory_records (not via strategies)
-        namespace = f'/items/{user_id}'
         
         print(f"Debug: Calling retrieve_memories with memory_id={MEMORY_ID}, namespace={namespace}")
         
