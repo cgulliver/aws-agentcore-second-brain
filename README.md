@@ -78,12 +78,13 @@ This separation means you can rebuild your task manager from scratch without los
 ## Demo
 
 ```
-You: I've decided to go with the blue paint for the living room.
-     Sarah liked it best and it matches the new couch.
+You: I've decided to use Chase for the landscaping contractor.
+     He had the best quote and can start next month.
 
 Bot: Captured as decision
-     Files: 20-decisions/2024-01-15__blue-paint-living-room__sb-a1b2c3d.md
+     Files: 20-decisions/2024-01-15__use-chase-landscaping-contractor__sb-a1b2c3d.md
      Commit: a1b2c3d
+     Linked to: Home Landscaping Improvement Project ([[sb-120bb48]])
      
      Reply "fix: <instruction>" to correct.
 ```
