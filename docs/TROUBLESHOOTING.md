@@ -203,6 +203,18 @@ aws logs filter-log-events \
 - This is normal - Memory stores historical versions with timestamps
 - The LLM uses the `Synced:` timestamp to identify the most recent version
 - Each update creates a new record rather than replacing the old one
+- Run `rebuild` to clear old records and create fresh ones
+
+**Date queries not working ("When did I...")**
+- Memory records may be missing the `Created:` field
+- This happens if items were synced before the `created_at` feature was added
+- Run `rebuild` to resync all items with the new format that includes creation dates
+- After rebuild, date queries will work for all items
+
+**Rebuild not picking up new code changes**
+- AgentCore Runtime may be using a cached container image
+- Run `npx cdk deploy SecondBrainCoreStack` to force the runtime to update
+- Then run `rebuild` in Slack to resync with the new code
 
 **Items not linking correctly**
 1. Verify items have proper front matter (id, type, title, tags)

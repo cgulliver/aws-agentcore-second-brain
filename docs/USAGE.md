@@ -88,6 +88,26 @@ repair
 
 This finds items that exist in CodeCommit but not in Memory and syncs only those.
 
+### Rebuild Command
+
+To completely rebuild Memory from scratch (clears all records and resyncs):
+
+```
+rebuild
+```
+
+This is useful when:
+- Memory records are corrupted or out of date
+- You've updated the sync format (e.g., added new fields like `Created:`)
+- You want a clean slate
+
+The rebuild process:
+1. Deletes ALL existing Memory records for your user
+2. Resets the sync marker
+3. Resyncs all items from CodeCommit with fresh metadata
+
+**Note:** After a code update that changes the Memory record format, you must run `rebuild` to update existing records. New items will automatically use the new format, but old records retain their original format until rebuilt.
+
 ## Message Classification
 
 The agent classifies messages into six categories:
