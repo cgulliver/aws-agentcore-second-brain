@@ -78,11 +78,11 @@ This separation means you can rebuild your task manager from scratch without los
 ## Demo
 
 ```
-You: I've decided to use PostgreSQL for the new project because of 
-     better JSON support and our team's familiarity with it.
+You: I've decided to go with the blue paint for the living room.
+     Sarah liked it best and it matches the new couch.
 
 Bot: Captured as decision
-     Files: 20-decisions/2024-01-15__use-postgresql__sb-a1b2c3d.md
+     Files: 20-decisions/2024-01-15__blue-paint-living-room__sb-a1b2c3d.md
      Commit: a1b2c3d
      
      Reply "fix: <instruction>" to correct.
