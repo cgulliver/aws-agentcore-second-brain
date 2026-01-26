@@ -364,20 +364,20 @@ npx cdk deploy SecondBrainCoreStack -c classifierModel=global.amazon.nova-2-lite
 npx cdk deploy SecondBrainCoreStack -c classifierModel=anthropic.claude-3-5-haiku-20241022-v1:0
 ```
 
-| Model | Model ID | Cost (input/output) | Description |
-|-------|----------|---------------------|-------------|
-| Nova 2 Lite | `global.amazon.nova-2-lite-v1:0` | $0.04/$0.16 per 1M | Multimodal model processing text, image, and video inputs |
-| Nova Micro | `amazon.nova-micro-v1:0` | $0.035/$0.14 per 1M | Text-only model delivering lowest latency responses |
-| Nova Lite | `amazon.nova-lite-v1:0` | $0.06/$0.24 per 1M | Low-cost multimodal model for processing image, video, and text |
-| Claude 3.5 Haiku | `anthropic.claude-3-5-haiku-20241022-v1:0` | $0.80/$4.00 per 1M | Anthropic text model with text input and output |
+| Model | Model ID | Relative Cost | Description |
+|-------|----------|---------------|-------------|
+| Nova 2 Lite | `global.amazon.nova-2-lite-v1:0` | $ | Multimodal model processing text, image, and video inputs |
+| Nova Micro | `amazon.nova-micro-v1:0` | $ | Text-only model delivering lowest latency responses |
+| Nova Lite | `amazon.nova-lite-v1:0` | $ | Low-cost multimodal model for processing image, video, and text |
+| Claude 3.5 Haiku | `anthropic.claude-3-5-haiku-20241022-v1:0` | $$$ | Anthropic text model with text input and output |
+
+See [Amazon Bedrock pricing](https://aws.amazon.com/bedrock/pricing/) for current rates.
 
 **Nova 2 Extended Thinking:** Enable step-by-step reasoning with `reasoningEffort`:
 - `disabled` (default) - Standard responses
 - `low` - Light reasoning
 - `medium` - Balanced reasoning
 - `high` - Deep analysis
-
-See [Bedrock pricing](https://aws.amazon.com/bedrock/pricing/) for current rates.
 
 ### Environment Variables
 
