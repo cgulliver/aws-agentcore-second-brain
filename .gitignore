@@ -52,3 +52,4 @@ certs/*.pem
 !test/**/*.ts
 !vitest.config.ts
 __pycache__
+docs/COST-ESTIMATE.local.md
