@@ -92,9 +92,9 @@ Bot: Captured as decision
 
 ```
 ┌─────────────┐                              ┌─────────────┐
-│             │      "I decided to use       │             │
-│    You      │       PostgreSQL for the  ─▶ │  Second     │
-│             │       new project"           │   Brain     │
+│             │    "I decided to go with     │             │
+│    You      │     the blue paint for    ─▶ │  Second     │
+│             │     the living room"         │   Brain     │
 └─────────────┘                              └──────┬──────┘
                                                     │
                      ┌──────────────────────────────┼──────────────────────────────┐
