@@ -348,34 +348,34 @@ Note: The current implementation uses AWS CodeCommit for the knowledge repositor
 
 ### Model Selection
 
-The classifier model can be configured at deploy time for cost/capability tradeoffs:
+The classifier model can be configured at deploy time:
 
 ```bash
-# Use default (Nova 2 Lite - best balance)
+# Use default (Nova 2 Lite)
 npx cdk deploy SecondBrainCoreStack
 
-# Use Nova Micro (cheapest, simple classification only)
+# Use Nova Micro
 npx cdk deploy SecondBrainCoreStack -c classifierModel=amazon.nova-micro-v1:0
 
 # Use Nova 2 Lite with reasoning enabled
 npx cdk deploy SecondBrainCoreStack -c classifierModel=global.amazon.nova-2-lite-v1:0 -c reasoningEffort=low
 
-# Use Claude Haiku (highest quality, 20x cost)
+# Use Claude Haiku
 npx cdk deploy SecondBrainCoreStack -c classifierModel=anthropic.claude-3-5-haiku-20241022-v1:0
 ```
 
-| Model | Model ID | Cost (input/output) | Notes |
-|-------|----------|---------------------|-------|
-| Nova 2 Lite | `global.amazon.nova-2-lite-v1:0` | $0.04/$0.16 per 1M | Default, 1M context, extended thinking |
-| Nova Micro | `amazon.nova-micro-v1:0` | $0.035/$0.14 per 1M | Fastest, simple classification |
-| Nova Lite | `amazon.nova-lite-v1:0` | $0.06/$0.24 per 1M | Legacy option |
-| Claude 3.5 Haiku | `anthropic.claude-3-5-haiku-20241022-v1:0` | $0.80/$4.00 per 1M | Highest quality |
+| Model | Model ID | Cost (input/output) | Description |
+|-------|----------|---------------------|-------------|
+| Nova 2 Lite | `global.amazon.nova-2-lite-v1:0` | $0.04/$0.16 per 1M | Multimodal model with 1M token context, supports extended thinking |
+| Nova Micro | `amazon.nova-micro-v1:0` | $0.035/$0.14 per 1M | Text-only model optimized for speed and low cost |
+| Nova Lite | `amazon.nova-lite-v1:0` | $0.06/$0.24 per 1M | Multimodal model balancing speed and capability |
+| Claude 3.5 Haiku | `anthropic.claude-3-5-haiku-20241022-v1:0` | $0.80/$4.00 per 1M | Anthropic's fast, intelligent model for quick tasks |
 
-**Nova 2 Lite Extended Thinking:** Enable step-by-step reasoning with `reasoningEffort`:
-- `disabled` (default) - Fast responses, no reasoning overhead
-- `low` - Light reasoning for simple decisions
+**Nova 2 Extended Thinking:** Enable step-by-step reasoning with `reasoningEffort`:
+- `disabled` (default) - Standard responses
+- `low` - Light reasoning
 - `medium` - Balanced reasoning
-- `high` - Deep analysis for complex classification
+- `high` - Deep analysis
 
 See [Bedrock pricing](https://aws.amazon.com/bedrock/pricing/) for current rates.
 

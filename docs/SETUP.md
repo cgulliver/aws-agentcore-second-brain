@@ -457,7 +457,7 @@ git pull
 ### Bedrock AgentCore
 
 The system uses Bedrock AgentCore for:
-- **Runtime**: Hosts the classifier model (Nova Lite by default)
+- **Runtime**: Hosts the classifier model (Nova 2 Lite by default)
 - **Memory**: Stores item metadata for semantic retrieval and linking
 
 Memory is automatically provisioned during deployment. Items are synced from CodeCommit to Memory on each request, enabling the classifier to find related projects/ideas without explicit tool calls.
@@ -467,13 +467,13 @@ Memory is automatically provisioned during deployment. Items are synced from Cod
 Configure the classifier model at deploy time:
 
 ```bash
-# Nova 2 Lite (default, best balance)
+# Nova 2 Lite (default)
 ./scripts/deploy.sh --sender-email you@example.com
 
-# Nova Micro (cheapest, simple classification only)
+# Nova Micro
 ./scripts/deploy.sh --sender-email you@example.com --model amazon.nova-micro-v1:0
 
-# Claude Haiku (highest quality, 20x cost)
+# Claude Haiku
 ./scripts/deploy.sh --sender-email you@example.com --model anthropic.claude-3-5-haiku-20241022-v1:0
 ```
 
