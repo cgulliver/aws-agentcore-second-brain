@@ -194,8 +194,16 @@ export function validateActionPlan(plan: unknown): ValidationResult {
     });
   }
 
+  // For tasks, title can come from task_details.title if top-level is missing
+  // The LLM sometimes puts the title only in task_details for task classifications
   if (!p.title || typeof p.title !== 'string') {
-    errors.push({ field: 'title', message: 'Title is required' });
+    const taskDetails = p.task_details as Record<string, unknown> | undefined;
+    if (p.classification === 'task' && taskDetails?.title && typeof taskDetails.title === 'string') {
+      // Promote task_details.title to top-level title
+      p.title = taskDetails.title;
+    } else {
+      errors.push({ field: 'title', message: 'Title is required' });
+    }
   }
 
   // Default confidence if missing
