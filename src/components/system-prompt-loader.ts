@@ -112,6 +112,18 @@ export function validatePromptStructure(content: string): PromptValidationResult
 }
 
 /**
+ * Replace date placeholders in prompt content
+ * 
+ * Replaces {TODAY} with the current date in YYYY-MM-DD format.
+ * This ensures examples in the prompt use the actual current date
+ * rather than hardcoded dates that the LLM might copy.
+ */
+function replaceDatePlaceholders(content: string): string {
+  const today = new Date().toISOString().split('T')[0];
+  return content.replace(/\{TODAY\}/g, today);
+}
+
+/**
  * Load system prompt from CodeCommit
  * 
  * Validates: Requirements 40.1, 40.2
@@ -131,7 +143,7 @@ export async function loadSystemPrompt(
 
   try {
     const promptPath = config.promptPath || DEFAULT_PROMPT_PATH;
-    const content = await readFile(knowledgeConfig, promptPath);
+    let content = await readFile(knowledgeConfig, promptPath);
     const commitId = await getLatestCommitId(knowledgeConfig);
 
     if (!content) {
@@ -141,6 +153,9 @@ export async function loadSystemPrompt(
       });
       return await createFallbackPrompt();
     }
+
+    // Replace date placeholders with actual current date
+    content = replaceDatePlaceholders(content);
 
     // Validate structure
     const validation = validatePromptStructure(content);
