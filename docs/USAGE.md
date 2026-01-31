@@ -1,6 +1,6 @@
 # Usage Guide
 
-Learn how to effectively use the Second Brain Agent to capture and organize your thoughts.
+Commands, message formats, and workflows.
 
 ## Quick Start
 
@@ -12,7 +12,7 @@ Send a direct message to your Slack bot. The agent will:
 
 ## Context Preservation
 
-**Nothing gets lost.** The agent extracts and preserves all factual information from your messages:
+The agent extracts and preserves factual information from messages:
 
 - **Contact info**: Names, phone numbers, emails, roles
 - **Dates and deadlines**: "by Friday", "next Tuesday"
