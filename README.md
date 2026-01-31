@@ -469,6 +469,16 @@ Contributions welcome! Please:
 
 MIT - see [LICENSE](./LICENSE) for details.
 
+## Disclaimer
+
+This project is provided as-is under the MIT License, without warranty of any kind.
+
+**Support** — Personal project shared for learning. Maintenance is best-effort.
+
+**Security** — You are responsible for securing your deployment: secrets, credentials, authentication, authorization, and network controls.
+
+**Cost** — This project uses AWS services and AI models that incur usage-based costs. You are responsible for monitoring usage and setting budgets.
+
 ---
 
 Built with [AWS CDK](https://aws.amazon.com/cdk/), [Bedrock AgentCore](https://aws.amazon.com/bedrock/), and [Strands Agents](https://github.com/strands-agents/strands-agents).
