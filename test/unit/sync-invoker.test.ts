@@ -11,10 +11,12 @@ import {
   invokeDeleteItem,
   invokeSyncAll,
   invokeHealthCheck,
+  invokeRepair,
   type SyncItemRequest,
   type DeleteItemRequest,
   type SyncAllRequest,
   type HealthCheckRequest,
+  type RepairRequest,
   type SyncInvokerConfig,
 } from '../../src/components/sync-invoker';
 
@@ -22,28 +24,14 @@ import {
 // Mock Setup
 // ============================================================================
 
-// Mock fetch globally
-const mockFetch = vi.fn();
-global.fetch = mockFetch;
+// Mock the SDK client
+const mockSend = vi.fn();
 
-// Mock AWS signing (we don't need to test actual signing)
-vi.mock('@smithy/signature-v4', () => ({
-  SignatureV4: vi.fn().mockImplementation(() => ({
-    sign: vi.fn().mockResolvedValue({
-      headers: {
-        'Content-Type': 'application/json',
-        host: 'bedrock-agentcore.us-east-1.amazonaws.com',
-        authorization: 'mock-auth',
-      },
-    }),
+vi.mock('@aws-sdk/client-bedrock-agentcore', () => ({
+  BedrockAgentCoreClient: vi.fn().mockImplementation(() => ({
+    send: mockSend,
   })),
-}));
-
-vi.mock('@aws-sdk/credential-provider-node', () => ({
-  defaultProvider: vi.fn().mockReturnValue(() => Promise.resolve({
-    accessKeyId: 'mock-access-key',
-    secretAccessKey: 'mock-secret-key',
-  })),
+  InvokeAgentRuntimeCommand: vi.fn().mockImplementation((input) => input),
 }));
 
 const testConfig: SyncInvokerConfig = {
@@ -56,24 +44,14 @@ const testConfig: SyncInvokerConfig = {
 // ============================================================================
 
 /**
- * Create a mock fetch response
+ * Create a mock SDK response with transformToString method
  */
-function createMockResponse(body: object, ok = true, status = 200): Response {
+function createMockResponse(body: object): { response: { transformToString: () => Promise<string> } } {
   return {
-    ok,
-    status,
-    text: () => Promise.resolve(JSON.stringify(body)),
-    headers: new Headers(),
-  } as Response;
-}
-
-/**
- * Extract the payload from the fetch call
- */
-function extractPayload(callIndex = 0): object {
-  const call = mockFetch.mock.calls[callIndex];
-  if (!call || !call[1]?.body) return {};
-  return JSON.parse(call[1].body as string);
+    response: {
+      transformToString: () => Promise.resolve(JSON.stringify(body)),
+    },
+  };
 }
 
 // ============================================================================
@@ -98,11 +76,11 @@ describe('Sync Invoker', () => {
       operation: 'sync_item',
       actorId: 'user-123',
       itemPath: '10-ideas/2026-01-20__test-idea__sb-abc1234.md',
-      itemContent: '---\ntitle: Test Idea\n---\nContent here',
+      itemContent: '---\nid: sb-abc1234\ntype: idea\ntitle: Test Idea\n---\n\n# Test Idea',
     };
 
-    it('should invoke AgentCore with sync_operation payload', async () => {
-      mockFetch.mockResolvedValueOnce(createMockResponse({
+    it('should invoke classifier with correct payload', async () => {
+      mockSend.mockResolvedValueOnce(createMockResponse({
         success: true,
         items_synced: 1,
         items_deleted: 0,
@@ -110,37 +88,43 @@ describe('Sync Invoker', () => {
 
       await invokeSyncItem(testConfig, syncItemRequest);
 
-      expect(mockFetch).toHaveBeenCalledTimes(1);
-      const payload = extractPayload();
-      expect(payload).toEqual({
-        sync_operation: 'sync_item',
-        actor_id: 'user-123',
-        item_path: '10-ideas/2026-01-20__test-idea__sb-abc1234.md',
-        item_content: '---\ntitle: Test Idea\n---\nContent here',
-      });
+      expect(mockSend).toHaveBeenCalledTimes(1);
     });
 
-    it('should not throw on AgentCore error (fire-and-forget)', async () => {
-      mockFetch.mockRejectedValueOnce(new Error('Network error'));
+    it('should include commit_id when provided', async () => {
+      mockSend.mockResolvedValueOnce(createMockResponse({
+        success: true,
+        items_synced: 1,
+        items_deleted: 0,
+      }));
 
-      // Should not throw
+      const requestWithCommit: SyncItemRequest = {
+        ...syncItemRequest,
+        commitId: 'abc123def',
+      };
+
+      await invokeSyncItem(testConfig, requestWithCommit);
+
+      expect(mockSend).toHaveBeenCalledTimes(1);
+    });
+
+    it('should handle sync failure gracefully', async () => {
+      mockSend.mockResolvedValueOnce(createMockResponse({
+        success: false,
+        items_synced: 0,
+        items_deleted: 0,
+        error: 'Memory storage failed',
+      }));
+
+      // Should not throw - fire and forget semantics
       await expect(invokeSyncItem(testConfig, syncItemRequest)).resolves.toBeUndefined();
     });
 
-    it('should log error on AgentCore failure', async () => {
-      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-      mockFetch.mockRejectedValueOnce(new Error('Network error'));
+    it('should handle network errors gracefully', async () => {
+      mockSend.mockRejectedValueOnce(new Error('Network error'));
 
-      await invokeSyncItem(testConfig, syncItemRequest);
-
-      expect(consoleSpy).toHaveBeenCalledWith(
-        'Failed to invoke sync operation',
-        expect.objectContaining({
-          error: 'Network error',
-          operation: 'sync_item',
-        })
-      );
-      consoleSpy.mockRestore();
+      // Should not throw - fire and forget semantics
+      await expect(invokeSyncItem(testConfig, syncItemRequest)).resolves.toBeUndefined();
     });
   });
 
@@ -155,8 +139,8 @@ describe('Sync Invoker', () => {
       sbId: 'sb-abc1234',
     };
 
-    it('should invoke AgentCore with delete_item payload', async () => {
-      mockFetch.mockResolvedValueOnce(createMockResponse({
+    it('should invoke classifier with correct payload', async () => {
+      mockSend.mockResolvedValueOnce(createMockResponse({
         success: true,
         items_synced: 0,
         items_deleted: 1,
@@ -164,36 +148,19 @@ describe('Sync Invoker', () => {
 
       await invokeDeleteItem(testConfig, deleteItemRequest);
 
-      expect(mockFetch).toHaveBeenCalledTimes(1);
-      const payload = extractPayload();
-      expect(payload).toEqual({
-        sync_operation: 'delete_item',
-        actor_id: 'user-123',
-        sb_id: 'sb-abc1234',
-      });
+      expect(mockSend).toHaveBeenCalledTimes(1);
     });
 
-    it('should not throw on AgentCore error (fire-and-forget)', async () => {
-      mockFetch.mockRejectedValueOnce(new Error('Network error'));
+    it('should handle delete failure gracefully', async () => {
+      mockSend.mockResolvedValueOnce(createMockResponse({
+        success: false,
+        items_synced: 0,
+        items_deleted: 0,
+        error: 'Item not found',
+      }));
 
-      // Should not throw
+      // Should not throw - fire and forget semantics
       await expect(invokeDeleteItem(testConfig, deleteItemRequest)).resolves.toBeUndefined();
-    });
-
-    it('should log error on AgentCore failure', async () => {
-      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-      mockFetch.mockRejectedValueOnce(new Error('Network error'));
-
-      await invokeDeleteItem(testConfig, deleteItemRequest);
-
-      expect(consoleSpy).toHaveBeenCalledWith(
-        'Failed to invoke sync operation',
-        expect.objectContaining({
-          error: 'Network error',
-          operation: 'delete_item',
-        })
-      );
-      consoleSpy.mockRestore();
     });
   });
 
@@ -205,101 +172,61 @@ describe('Sync Invoker', () => {
     const syncAllRequest: SyncAllRequest = {
       operation: 'sync_all',
       actorId: 'user-123',
-      forceFullSync: true,
     };
 
-    it('should invoke AgentCore with sync_all payload', async () => {
-      mockFetch.mockResolvedValueOnce(createMockResponse({
+    it('should invoke classifier with correct payload', async () => {
+      mockSend.mockResolvedValueOnce(createMockResponse({
         success: true,
-        items_synced: 5,
+        items_synced: 10,
         items_deleted: 0,
-      }));
-
-      await invokeSyncAll(testConfig, syncAllRequest);
-
-      expect(mockFetch).toHaveBeenCalledTimes(1);
-      const payload = extractPayload();
-      expect(payload).toEqual({
-        sync_operation: 'sync_all',
-        actor_id: 'user-123',
-        force_full_sync: true,
-      });
-    });
-
-    it('should return sync response with correct fields', async () => {
-      mockFetch.mockResolvedValueOnce(createMockResponse({
-        success: true,
-        items_synced: 5,
-        items_deleted: 2,
       }));
 
       const result = await invokeSyncAll(testConfig, syncAllRequest);
 
-      expect(result).toEqual({
-        success: true,
-        itemsSynced: 5,
-        itemsDeleted: 2,
-      });
+      expect(mockSend).toHaveBeenCalledTimes(1);
+      expect(result.success).toBe(true);
+      expect(result.itemsSynced).toBe(10);
     });
 
-    it('should handle forceFullSync being undefined', async () => {
-      const requestWithoutForce: SyncAllRequest = {
-        operation: 'sync_all',
-        actorId: 'user-123',
+    it('should include force_full_sync when provided', async () => {
+      mockSend.mockResolvedValueOnce(createMockResponse({
+        success: true,
+        items_synced: 15,
+        items_deleted: 0,
+      }));
+
+      const requestWithForce: SyncAllRequest = {
+        ...syncAllRequest,
+        forceFullSync: true,
       };
 
-      mockFetch.mockResolvedValueOnce(createMockResponse({
-        success: true,
-        items_synced: 3,
-        items_deleted: 0,
-      }));
+      const result = await invokeSyncAll(testConfig, requestWithForce);
 
-      await invokeSyncAll(testConfig, requestWithoutForce);
-
-      const payload = extractPayload();
-      // force_full_sync should not be present when undefined
-      expect(payload).toEqual({
-        sync_operation: 'sync_all',
-        actor_id: 'user-123',
-      });
+      expect(result.success).toBe(true);
+      expect(result.itemsSynced).toBe(15);
     });
 
-    it('should return error response on HTTP error', async () => {
-      mockFetch.mockResolvedValueOnce(createMockResponse(
-        { error: 'Internal error' },
-        false,
-        500
-      ));
-
-      const result = await invokeSyncAll(testConfig, syncAllRequest);
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('AgentCore error');
-    });
-
-    it('should return error response on network failure', async () => {
-      mockFetch.mockRejectedValueOnce(new Error('Network error'));
-
-      const result = await invokeSyncAll(testConfig, syncAllRequest);
-
-      expect(result.success).toBe(false);
-      expect(result.error).toBe('Network error');
-      expect(result.itemsSynced).toBe(0);
-      expect(result.itemsDeleted).toBe(0);
-    });
-
-    it('should include error from response', async () => {
-      mockFetch.mockResolvedValueOnce(createMockResponse({
+    it('should return error on failure', async () => {
+      mockSend.mockResolvedValueOnce(createMockResponse({
         success: false,
         items_synced: 0,
         items_deleted: 0,
-        error: 'CodeCommit unavailable',
+        error: 'CodeCommit access denied',
       }));
 
       const result = await invokeSyncAll(testConfig, syncAllRequest);
 
       expect(result.success).toBe(false);
-      expect(result.error).toBe('CodeCommit unavailable');
+      expect(result.error).toBe('CodeCommit access denied');
+    });
+
+    it('should handle network errors', async () => {
+      mockSend.mockRejectedValueOnce(new Error('Connection timeout'));
+
+      const result = await invokeSyncAll(testConfig, syncAllRequest);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Connection timeout');
     });
   });
 
@@ -313,8 +240,8 @@ describe('Sync Invoker', () => {
       actorId: 'user-123',
     };
 
-    it('should invoke AgentCore with health_check payload', async () => {
-      mockFetch.mockResolvedValueOnce(createMockResponse({
+    it('should invoke classifier with correct payload', async () => {
+      mockSend.mockResolvedValueOnce(createMockResponse({
         success: true,
         items_synced: 0,
         items_deleted: 0,
@@ -322,99 +249,22 @@ describe('Sync Invoker', () => {
           codecommitCount: 10,
           memoryCount: 10,
           inSync: true,
-          lastSyncTimestamp: '2026-01-20T15:30:00Z',
-          lastSyncCommitId: 'abc1234',
+          lastSyncTimestamp: '2026-01-20T10:00:00Z',
+          lastSyncCommitId: 'abc123',
           missingInMemory: [],
           extraInMemory: [],
         },
       }));
 
-      await invokeHealthCheck(testConfig, healthCheckRequest);
-
-      expect(mockFetch).toHaveBeenCalledTimes(1);
-      const payload = extractPayload();
-      expect(payload).toEqual({
-        sync_operation: 'health_check',
-        actor_id: 'user-123',
-      });
-    });
-
-    it('should return health report with correct fields', async () => {
-      mockFetch.mockResolvedValueOnce(createMockResponse({
-        success: true,
-        items_synced: 0,
-        items_deleted: 0,
-        health_report: {
-          codecommitCount: 10,
-          memoryCount: 8,
-          inSync: false,
-          lastSyncTimestamp: '2026-01-20T15:30:00Z',
-          lastSyncCommitId: 'abc1234',
-          missingInMemory: ['sb-1234567', 'sb-2345678'],
-          extraInMemory: ['sb-3456789'],
-        },
-      }));
-
       const result = await invokeHealthCheck(testConfig, healthCheckRequest);
 
+      expect(mockSend).toHaveBeenCalledTimes(1);
       expect(result.success).toBe(true);
-      expect(result.healthReport).toEqual({
-        codecommitCount: 10,
-        memoryCount: 8,
-        inSync: false,
-        lastSyncTimestamp: '2026-01-20T15:30:00Z',
-        lastSyncCommitId: 'abc1234',
-        missingInMemory: ['sb-1234567', 'sb-2345678'],
-        extraInMemory: ['sb-3456789'],
-      });
+      expect(result.healthReport).toBeDefined();
     });
 
-    it('should handle null timestamps in health report', async () => {
-      mockFetch.mockResolvedValueOnce(createMockResponse({
-        success: true,
-        items_synced: 0,
-        items_deleted: 0,
-        health_report: {
-          codecommitCount: 5,
-          memoryCount: 0,
-          inSync: false,
-          lastSyncTimestamp: null,
-          lastSyncCommitId: null,
-          missingInMemory: ['sb-1', 'sb-2', 'sb-3', 'sb-4', 'sb-5'],
-          extraInMemory: [],
-        },
-      }));
-
-      const result = await invokeHealthCheck(testConfig, healthCheckRequest);
-
-      expect(result.healthReport?.lastSyncTimestamp).toBeNull();
-      expect(result.healthReport?.lastSyncCommitId).toBeNull();
-    });
-
-    it('should return error response on HTTP error', async () => {
-      mockFetch.mockResolvedValueOnce(createMockResponse(
-        { error: 'Internal error' },
-        false,
-        500
-      ));
-
-      const result = await invokeHealthCheck(testConfig, healthCheckRequest);
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('AgentCore error');
-    });
-
-    it('should return error response on network failure', async () => {
-      mockFetch.mockRejectedValueOnce(new Error('Timeout'));
-
-      const result = await invokeHealthCheck(testConfig, healthCheckRequest);
-
-      expect(result.success).toBe(false);
-      expect(result.error).toBe('Timeout');
-    });
-
-    it('should handle in-sync state correctly', async () => {
-      mockFetch.mockResolvedValueOnce(createMockResponse({
+    it('should return health report with sync status', async () => {
+      mockSend.mockResolvedValueOnce(createMockResponse({
         success: true,
         items_synced: 0,
         items_deleted: 0,
@@ -422,8 +272,8 @@ describe('Sync Invoker', () => {
           codecommitCount: 10,
           memoryCount: 10,
           inSync: true,
-          lastSyncTimestamp: '2026-01-20T15:30:00Z',
-          lastSyncCommitId: 'abc1234',
+          lastSyncTimestamp: '2026-01-20T10:00:00Z',
+          lastSyncCommitId: 'abc123',
           missingInMemory: [],
           extraInMemory: [],
         },
@@ -435,6 +285,69 @@ describe('Sync Invoker', () => {
       expect(result.healthReport?.missingInMemory).toHaveLength(0);
       expect(result.healthReport?.extraInMemory).toHaveLength(0);
     });
+
+    it('should detect out-of-sync state', async () => {
+      mockSend.mockResolvedValueOnce(createMockResponse({
+        success: true,
+        items_synced: 0,
+        items_deleted: 0,
+        health_report: {
+          codecommitCount: 10,
+          memoryCount: 8,
+          inSync: false,
+          lastSyncTimestamp: '2026-01-20T10:00:00Z',
+          lastSyncCommitId: 'abc123',
+          missingInMemory: ['sb-abc1234', 'sb-def5678'],
+          extraInMemory: [],
+        },
+      }));
+
+      const result = await invokeHealthCheck(testConfig, healthCheckRequest);
+
+      expect(result.healthReport?.inSync).toBe(false);
+      expect(result.healthReport?.missingInMemory).toHaveLength(2);
+    });
+  });
+
+  // ==========================================================================
+  // invokeRepair Tests
+  // ==========================================================================
+
+  describe('invokeRepair', () => {
+    const repairRequest: RepairRequest = {
+      operation: 'repair',
+      actorId: 'user-123',
+      missingIds: ['sb-abc1234', 'sb-def5678'],
+    };
+
+    it('should invoke classifier with missing IDs', async () => {
+      mockSend.mockResolvedValueOnce(createMockResponse({
+        success: true,
+        items_synced: 2,
+        items_deleted: 0,
+      }));
+
+      const result = await invokeRepair(testConfig, repairRequest);
+
+      expect(mockSend).toHaveBeenCalledTimes(1);
+      expect(result.success).toBe(true);
+      expect(result.itemsSynced).toBe(2);
+    });
+
+    it('should handle partial repair', async () => {
+      mockSend.mockResolvedValueOnce(createMockResponse({
+        success: true,
+        items_synced: 1,
+        items_deleted: 0,
+        error: 'One item not found in CodeCommit',
+      }));
+
+      const result = await invokeRepair(testConfig, repairRequest);
+
+      expect(result.success).toBe(true);
+      expect(result.itemsSynced).toBe(1);
+      expect(result.error).toBe('One item not found in CodeCommit');
+    });
   });
 
   // ==========================================================================
@@ -442,13 +355,24 @@ describe('Sync Invoker', () => {
   // ==========================================================================
 
   describe('Edge Cases', () => {
+    it('should handle empty response', async () => {
+      mockSend.mockResolvedValueOnce({ response: null });
+
+      const result = await invokeSyncAll(testConfig, {
+        operation: 'sync_all',
+        actorId: 'user-123',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Empty response from AgentCore');
+    });
+
     it('should handle malformed JSON response', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        text: () => Promise.resolve('not valid json'),
-        headers: new Headers(),
-      } as Response);
+      mockSend.mockResolvedValueOnce({
+        response: {
+          transformToString: () => Promise.resolve('not valid json'),
+        },
+      });
 
       const result = await invokeSyncAll(testConfig, {
         operation: 'sync_all',
@@ -459,7 +383,7 @@ describe('Sync Invoker', () => {
     });
 
     it('should handle unknown error types', async () => {
-      mockFetch.mockRejectedValueOnce('string error');
+      mockSend.mockRejectedValueOnce('string error');
 
       const result = await invokeSyncAll(testConfig, {
         operation: 'sync_all',

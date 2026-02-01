@@ -4,12 +4,15 @@
  * Invokes sync operations via the AgentCore classifier.
  * The classifier handles sync operations when payload contains sync_operation field.
  *
+ * Uses @aws-sdk/client-bedrock-agentcore for API calls.
+ *
  * Validates: Requirements 1.1, 2.1, 3.1, 5.1
  */
 
-import { SignatureV4 } from '@smithy/signature-v4';
-import { Sha256 } from '@aws-crypto/sha256-js';
-import { defaultProvider } from '@aws-sdk/credential-provider-node';
+import {
+  BedrockAgentCoreClient,
+  InvokeAgentRuntimeCommand,
+} from '@aws-sdk/client-bedrock-agentcore';
 
 // ============================================================================
 // Interfaces
@@ -163,65 +166,59 @@ function toSyncResponse(response: ClassifierSyncResponse): SyncResponse {
 }
 
 /**
+ * Convert SDK streaming response to string
+ * The SDK returns a SdkStreamMixin which has a transformToString method
+ */
+async function streamToString(stream: unknown): Promise<string> {
+  // SDK stream has transformToString method
+  if (stream && typeof stream === 'object' && 'transformToString' in stream) {
+    const sdkStream = stream as { transformToString: () => Promise<string> };
+    return await sdkStream.transformToString();
+  }
+
+  // If it's already a Uint8Array, decode directly
+  if (stream instanceof Uint8Array) {
+    return new TextDecoder().decode(stream);
+  }
+
+  // If it's a string, return as-is
+  if (typeof stream === 'string') {
+    return stream;
+  }
+
+  // Fallback: try to convert to string
+  return String(stream);
+}
+
+/**
  * Invoke AgentCore classifier with sync operation payload
  */
 async function invokeClassifierSync(
   config: SyncInvokerConfig,
-  payload: SyncPayload,
-  waitForResponse: boolean
+  payload: SyncPayload
 ): Promise<SyncResponse> {
-  const region = config.region;
-  const endpoint = `https://bedrock-agentcore.${region}.amazonaws.com`;
-  const encodedArn = encodeURIComponent(config.agentRuntimeArn);
-  const path = `/runtimes/${encodedArn}/invocations`;
-  const url = `${endpoint}${path}`;
+  const client = new BedrockAgentCoreClient({ region: config.region });
 
   try {
-    const signer = new SignatureV4({
-      credentials: defaultProvider(),
-      region,
-      service: 'bedrock-agentcore',
-      sha256: Sha256,
+    const command = new InvokeAgentRuntimeCommand({
+      agentRuntimeArn: config.agentRuntimeArn,
+      payload: Buffer.from(JSON.stringify(payload)),
+      contentType: 'application/json',
+      accept: 'application/json',
     });
 
-    const body = JSON.stringify(payload);
+    const response = await client.send(command);
 
-    const signedRequest = await signer.sign({
-      method: 'POST',
-      protocol: 'https:',
-      hostname: `bedrock-agentcore.${region}.amazonaws.com`,
-      path,
-      query: {},
-      headers: {
-        'Content-Type': 'application/json',
-        host: `bedrock-agentcore.${region}.amazonaws.com`,
-      },
-      body,
-    });
-
-    // For fire-and-forget operations, we still need to wait for the response
-    // since AgentCore doesn't support async invocation like Lambda
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: signedRequest.headers as Record<string, string>,
-      body,
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('Sync operation failed', {
-        status: response.status,
-        error: errorText.substring(0, 200),
-      });
+    if (!response.response) {
       return {
         success: false,
         itemsSynced: 0,
         itemsDeleted: 0,
-        error: `AgentCore error: ${response.status}`,
+        error: 'Empty response from AgentCore',
       };
     }
 
-    const responseText = await response.text();
+    const responseText = await streamToString(response.response);
     const parsedResponse = JSON.parse(responseText) as ClassifierSyncResponse;
 
     return toSyncResponse(parsedResponse);
@@ -257,7 +254,7 @@ export async function invokeSyncItem(
   const payload = toSyncPayload(request);
 
   try {
-    const result = await invokeClassifierSync(config, payload, false);
+    const result = await invokeClassifierSync(config, payload);
     console.log('Sync item completed', {
       operation: request.operation,
       itemPath: request.itemPath,
@@ -286,7 +283,7 @@ export async function invokeDeleteItem(
   const payload = toSyncPayload(request);
 
   try {
-    const result = await invokeClassifierSync(config, payload, false);
+    const result = await invokeClassifierSync(config, payload);
     console.log('Delete item completed', {
       operation: request.operation,
       sbId: request.sbId,
@@ -314,7 +311,7 @@ export async function invokeSyncAll(
   const payload = toSyncPayload(request);
 
   try {
-    const result = await invokeClassifierSync(config, payload, true);
+    const result = await invokeClassifierSync(config, payload);
     console.log('Sync all completed', {
       success: result.success,
       itemsSynced: result.itemsSynced,
@@ -346,7 +343,7 @@ export async function invokeHealthCheck(
   const payload = toSyncPayload(request);
 
   try {
-    const result = await invokeClassifierSync(config, payload, true);
+    const result = await invokeClassifierSync(config, payload);
     console.log('Health check completed', {
       success: result.success,
       inSync: result.healthReport?.inSync,
@@ -382,7 +379,7 @@ export async function invokeRepair(
   };
 
   try {
-    const result = await invokeClassifierSync(config, payload, true);
+    const result = await invokeClassifierSync(config, payload);
     console.log('Repair completed', {
       success: result.success,
       itemsSynced: result.itemsSynced,
@@ -400,4 +397,3 @@ export async function invokeRepair(
     };
   }
 }
-

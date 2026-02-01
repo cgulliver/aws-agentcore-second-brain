@@ -4,15 +4,17 @@
  * Invokes AgentCore Runtime for message classification.
  * Handles streaming responses and rate limiting.
  * 
- * Note: Uses HTTP invocation since AgentCore SDK may not be available.
- * In production, this would use the official bedrock-agentcore SDK.
+ * Uses @aws-sdk/client-bedrock-agentcore for API calls.
  * 
  * Validates: Requirements 6.3, 7, 8, 50.6, 50.7
  */
 
-import { SignatureV4 } from '@smithy/signature-v4';
-import { Sha256 } from '@aws-crypto/sha256-js';
-import { defaultProvider } from '@aws-sdk/credential-provider-node';
+import {
+  BedrockAgentCoreClient,
+  InvokeAgentRuntimeCommand,
+  ThrottlingException,
+  ServiceQuotaExceededException,
+} from '@aws-sdk/client-bedrock-agentcore';
 import type { ActionPlan, MultiItemResponse } from './action-plan';
 import { parseActionPlanFromLLM, isMultiItemResponse } from './action-plan';
 
@@ -66,18 +68,32 @@ function calculateBackoff(attempt: number): number {
 }
 
 /**
- * Parse AgentCore ARN to extract runtime ID
+ * Convert SDK streaming response to string
+ * The SDK returns a SdkStreamMixin which has a transformToString method
  */
-function parseAgentRuntimeArn(arn: string): { region: string; runtimeId: string } {
-  // ARN format: arn:aws:bedrock-agentcore:region:account:runtime/runtime-id
-  const parts = arn.split(':');
-  const region = parts[3];
-  const runtimeId = parts[5] || '';
-  return { region, runtimeId };
+async function streamToString(stream: unknown): Promise<string> {
+  // SDK stream has transformToString method
+  if (stream && typeof stream === 'object' && 'transformToString' in stream) {
+    const sdkStream = stream as { transformToString: () => Promise<string> };
+    return await sdkStream.transformToString();
+  }
+
+  // If it's already a Uint8Array, decode directly
+  if (stream instanceof Uint8Array) {
+    return new TextDecoder().decode(stream);
+  }
+
+  // If it's a string, return as-is
+  if (typeof stream === 'string') {
+    return stream;
+  }
+
+  // Fallback: try to convert to string
+  return String(stream);
 }
 
 /**
- * Invoke AgentCore Runtime via HTTP
+ * Invoke AgentCore Runtime via SDK
  * 
  * Validates: Requirements 6.3, 50.6, 50.7
  */
@@ -85,70 +101,28 @@ export async function invokeAgentRuntime(
   config: AgentCoreConfig,
   payload: InvocationPayload
 ): Promise<InvocationResult> {
-  const { region } = parseAgentRuntimeArn(config.agentRuntimeArn);
-  
-  // AgentCore endpoint - use the full ARN in the path
-  const endpoint = `https://bedrock-agentcore.${region}.amazonaws.com`;
-  // URL-encode the ARN for the path
-  const encodedArn = encodeURIComponent(config.agentRuntimeArn);
-  const path = `/runtimes/${encodedArn}/invocations`;
-  const url = `${endpoint}${path}`;
+  const client = new BedrockAgentCoreClient({ region: config.region });
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
-      // Sign the request with AWS credentials
-      const signer = new SignatureV4({
-        credentials: defaultProvider(),
-        region,
-        service: 'bedrock-agentcore',
-        sha256: Sha256,
+      const command = new InvokeAgentRuntimeCommand({
+        agentRuntimeArn: config.agentRuntimeArn,
+        payload: Buffer.from(JSON.stringify(payload)),
+        contentType: 'application/json',
+        accept: 'application/json',
       });
 
-      const body = JSON.stringify(payload);
-      
-      const signedRequest = await signer.sign({
-        method: 'POST',
-        protocol: 'https:',
-        hostname: `bedrock-agentcore.${region}.amazonaws.com`,
-        path,
-        query: {},
-        headers: {
-          'Content-Type': 'application/json',
-          host: `bedrock-agentcore.${region}.amazonaws.com`,
-        },
-        body,
-      });
+      const response = await client.send(command);
 
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: signedRequest.headers as Record<string, string>,
-        body,
-      });
-
-      // Check for rate limiting
-      if (response.status === 429 || response.status === 503) {
-        if (attempt < MAX_RETRIES - 1) {
-          const retryAfter = parseInt(response.headers.get('Retry-After') || '1', 10);
-          const delay = calculateBackoff(attempt) || retryAfter * 1000;
-          console.warn('AgentCore throttled, retrying', { attempt, delay });
-          await sleep(delay);
-          continue;
-        }
+      // Handle the response stream
+      if (!response.response) {
         return {
           success: false,
-          error: 'AgentCore rate limit exceeded',
+          error: 'Empty response from AgentCore',
         };
       }
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        return {
-          success: false,
-          error: `AgentCore error: ${response.status} - ${errorText.substring(0, 200)}`,
-        };
-      }
-
-      const responseText = await response.text();
+      const responseText = await streamToString(response.response);
 
       // Parse the response
       let parsedResponse: { status: string; action_plan?: ActionPlan | MultiItemResponse; error?: string };
@@ -187,6 +161,21 @@ export async function invokeAgentRuntime(
         rawResponse: responseText.substring(0, 500),
       };
     } catch (error: unknown) {
+      // Handle throttling with retry
+      if (error instanceof ThrottlingException || error instanceof ServiceQuotaExceededException) {
+        if (attempt < MAX_RETRIES - 1) {
+          const delay = calculateBackoff(attempt);
+          console.warn('AgentCore throttled, retrying', { attempt, delay });
+          await sleep(delay);
+          continue;
+        }
+        return {
+          success: false,
+          error: 'AgentCore rate limit exceeded',
+        };
+      }
+
+      // Other errors - retry with backoff
       if (attempt < MAX_RETRIES - 1) {
         const delay = calculateBackoff(attempt);
         console.warn('AgentCore invocation failed, retrying', { attempt, delay, error });
@@ -221,7 +210,7 @@ export function shouldAskClarification(
     return true;
   }
 
-  // Medium confidence (0.7-0.85) - clarify for ambiguous classifications
+  // Medium confidence (0.5-0.85) - clarify for ambiguous classifications
   if (confidence < CONFIDENCE_THRESHOLDS.HIGH) {
     // For inbox, we can proceed without clarification (safe default)
     if (classification === 'inbox') {
