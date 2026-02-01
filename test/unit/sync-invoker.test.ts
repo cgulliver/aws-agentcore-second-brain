@@ -28,10 +28,14 @@ import {
 const mockSend = vi.fn();
 
 vi.mock('@aws-sdk/client-bedrock-agentcore', () => ({
-  BedrockAgentCoreClient: vi.fn().mockImplementation(() => ({
-    send: mockSend,
-  })),
-  InvokeAgentRuntimeCommand: vi.fn().mockImplementation((input) => input),
+  BedrockAgentCoreClient: vi.fn(function() {
+    return {
+      send: mockSend,
+    };
+  }),
+  InvokeAgentRuntimeCommand: vi.fn(function(input) {
+    return input;
+  }),
 }));
 
 const testConfig: SyncInvokerConfig = {
