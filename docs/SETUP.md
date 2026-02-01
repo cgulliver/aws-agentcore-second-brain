@@ -1,6 +1,6 @@
-# Complete Setup Guide
+# Setup Guide
 
-This guide walks you through setting up the Second Brain Agent from scratch.
+Step-by-step installation and configuration.
 
 ## Table of Contents
 

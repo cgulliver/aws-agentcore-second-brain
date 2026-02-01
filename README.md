@@ -7,17 +7,13 @@
 [![AWS CDK](https://img.shields.io/badge/AWS%20CDK-2.x-orange)]()
 [![License](https://img.shields.io/badge/license-MIT-green)]()
 
-## Why Second Brain?
+## Overview
 
-Ideas happen everywhere - in meetings, on walks, in the shower. The friction of opening an app, choosing a folder, and formatting a note means most thoughts never get captured. Second Brain removes that friction entirely.
-
-Send a message to your Slack bot, and it automatically:
-- **Classifies** your thought (inbox, idea, decision, project, or task)
-- **Stores** it in a Git repository as Markdown
-- **Routes** tasks to your task manager via email
-- **Confirms** what it did
-
-No apps to open. No forms to fill. Just message your bot.
+Second Brain accepts natural language input via Slack DM and:
+- Classifies messages as inbox, idea, decision, project, or task
+- Commits ideas, decisions, and projects to a Git repository as Markdown
+- Routes tasks to a task manager via email (Mail Drop)
+- Returns confirmation with file paths and commit IDs
 
 ## Philosophy
 
@@ -42,9 +38,7 @@ These layers connect through a single canonical identifier (**SB_ID**) which pro
 - A priority engine
 - A personal workflow enforcer
 
-**Design mantra:** *Capture now. Link reliably. Decide intentionally.*
-
-## Principles
+## Design Principles
 
 - **Neutral Capture** - Items captured without premature classification (e.g., work vs personal); human judgment applied during review, not at capture time
 - **One Canonical ID** - Each durable item gets an immutable SB_ID used consistently across the repository and execution tools
@@ -474,6 +468,16 @@ Contributions welcome! Please:
 ## License
 
 MIT - see [LICENSE](./LICENSE) for details.
+
+## Disclaimer
+
+This project is provided as-is under the MIT License, without warranty of any kind.
+
+**Support** — Personal project shared for learning. Maintenance is best-effort.
+
+**Security** — You are responsible for securing your deployment: secrets, credentials, authentication, authorization, and network controls.
+
+**Cost** — This project uses AWS services and AI models that incur usage-based costs. You are responsible for monitoring usage and setting budgets.
 
 ---
 
