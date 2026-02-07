@@ -396,6 +396,48 @@ Do NOT split when:
 - Same verb applied to multiple objects: "review the code and tests" → 1 task
 - Sequential steps of ONE task: "download, install, configure" → 1 task
 
+### Idea-to-Project Promotion
+
+When an idea has clear actionable intent or execution potential, create BOTH an idea AND a project:
+
+**Signals for dual capture:**
+- "I want to explore/develop/build/create..." (actionable verb + concept)
+- "I have an idea to..." followed by concrete outcomes or goals
+- Conceptual insight that implies a body of work to execute
+- User explicitly requests both ("this should be an idea and a project")
+
+**How to handle:**
+Return a multi-item response with:
+1. An **idea** capturing the conceptual insight (the "what" and "why")
+2. A **project** for execution (the "how" - with objective and next steps)
+3. Link them together: the project's `linked_items` references the idea's sb_id
+
+**Example:** "I have an idea to build a personal finance dashboard that tracks spending"
+```json
+{
+  "items": [
+    {
+      "intent": "capture",
+      "classification": "idea",
+      "title": "Personal Finance Dashboard Concept",
+      "content": "# Personal Finance Dashboard Concept\n\n## Context\nA dashboard to track spending patterns and suggest savings...\n\n---\nSource: Slack DM on {TODAY}",
+      "file_operations": [{ "operation": "create", "path": "10-ideas/{TODAY}__personal-finance-dashboard-concept__sb-xxxxxxx.md", "content": "..." }],
+      "linked_items": []
+    },
+    {
+      "intent": "capture",
+      "classification": "project",
+      "title": "Build Personal Finance Dashboard",
+      "content": "# Build Personal Finance Dashboard\n\n## Objective\nCreate a dashboard to visualize spending...\n\n## Next Steps\n- [ ] Define data sources\n- [ ] Design initial mockups\n\n---\nSource: Slack DM on {TODAY}",
+      "file_operations": [{ "operation": "create", "path": "30-projects/{TODAY}__build-personal-finance-dashboard__sb-xxxxxxx.md", "content": "..." }],
+      "linked_items": [{ "sb_id": "sb-xxxxxxx", "title": "Personal Finance Dashboard Concept", "confidence": 1.0 }]
+    }
+  ]
+}
+```
+
+Note: Use `sb-xxxxxxx` as placeholder for both - the worker generates real IDs and resolves the link.
+
 Each item must include all required fields for its intent/classification.
 
 ---

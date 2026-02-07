@@ -64,6 +64,7 @@ export interface ExecutionResult {
   emailMessageId?: string;
   filesModified?: string[];
   fileContents?: string[];  // Final content with front matter (for sync)
+  generatedSbId?: string;   // SB_ID generated for new items (for cross-linking)
   error?: string;
   validationErrors?: string[];
   completedSteps: CompletedSteps;
@@ -1386,6 +1387,7 @@ export async function executeActionPlan(
       emailMessageId: emailMessageId || undefined,
       filesModified: actualFilesModified,
       fileContents,
+      generatedSbId: generatedSbId || undefined,
       completedSteps,
     };
   } catch (error) {

@@ -140,6 +140,8 @@ What if we planned a road trip along the coast this summer?
 
 **Storage:** `10-ideas/YYYY-MM-DD__<slug>__<SB_ID>.md` (one file per idea, with front matter)
 
+**Note:** Ideas with actionable intent may be captured as both an idea AND a project. See "Idea-to-Project Promotion" below.
+
 ### Decision
 
 Explicit choices or commitments you've made.
@@ -572,6 +574,62 @@ Processed 2 items:
 • ❌ Invalid item → Failed: validation error
 1 succeeded, 1 failed
 ```
+
+## Idea-to-Project Promotion
+
+When an idea has clear actionable intent or execution potential, the agent can capture it as BOTH an idea AND a project automatically.
+
+### How It Works
+
+The agent detects when a conceptual insight implies a body of work to execute:
+
+1. Creates an **idea** capturing the conceptual insight (the "what" and "why")
+2. Creates a **project** for execution (the "how" - with objective and next steps)
+3. Links them together: the project references the idea in its `linked_items`
+
+### Trigger Signals
+
+The agent looks for:
+- Actionable verbs with concepts: "I want to explore/develop/build/create..."
+- Ideas with concrete outcomes: "I have an idea to..." followed by goals
+- Conceptual insights that imply execution work
+- Explicit requests: "this should be an idea and a project"
+
+### Examples
+
+**Automatic dual capture:**
+```
+I have an idea to create a personal finance dashboard that tracks spending 
+patterns and suggests savings opportunities. I want to explore how to visualize 
+the data in a way that drives better financial decisions.
+```
+→ Creates:
+- **Idea:** "Personal Finance Dashboard Concept" (the concept)
+- **Project:** "Build Personal Finance Dashboard" (the execution plan, linked to the idea)
+
+**Explicit request:**
+```
+Create both an idea and a project for building a home automation system using smart sensors
+```
+→ Creates:
+- **Idea:** "Smart Sensor Home Automation System"
+- **Project:** "Build Home Automation System" (linked to the idea)
+
+### Cross-Reference Linking
+
+When dual capture occurs, the project automatically includes the idea in its `linked_items`. This creates bidirectional linking:
+- The project's front matter includes a link to the idea's SB_ID
+- The idea gets a backlink to the project
+
+This ensures you can navigate between the conceptual insight and its execution plan.
+
+### When It Doesn't Apply
+
+Simple ideas without actionable intent remain as single items:
+```
+What if we added a water feature to the garden?
+```
+→ Creates only an **idea** (no implied project)
 
 ## Conversation Context
 

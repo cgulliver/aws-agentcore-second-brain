@@ -1877,7 +1877,7 @@ async function processSingleItem(
   actionPlan: ActionPlan,
   systemPrompt: { content: string; metadata: { commitId: string; sha256: string } },
   itemIndex: number
-): Promise<{ commitId?: string; filesModified?: string[]; linkedProject?: string }> {
+): Promise<{ commitId?: string; filesModified?: string[]; linkedProject?: string; generatedSbId?: string }> {
   log('info', 'Processing multi-item item', {
     event_id: eventId,
     item_index: itemIndex,
@@ -2087,6 +2087,7 @@ async function processSingleItem(
     commitId: result.commitId,
     filesModified: result.filesModified,
     linkedProject: actionPlan.linked_project?.title,
+    generatedSbId: result.generatedSbId,
   };
 }
 
@@ -2146,9 +2147,34 @@ async function handleMultiItemMessage(
     return;
   }
 
+  // Track generated sb_ids for cross-reference resolution
+  // Maps placeholder sb_id (sb-xxxxxxx) or title to real generated sb_id
+  const generatedSbIds: Map<string, string> = new Map();
+
   // Process each item sequentially (fail-forward)
   for (let i = 0; i < response.items.length; i++) {
     const actionPlan = response.items[i];
+    
+    // Resolve placeholder sb_ids in linked_items using previously generated sb_ids
+    if (actionPlan.linked_items?.length) {
+      for (const linkedItem of actionPlan.linked_items) {
+        // Check if this linked_item references a placeholder or a title we've already processed
+        if (linkedItem.sb_id === 'sb-xxxxxxx' || linkedItem.sb_id.startsWith('sb-xxxxxxx')) {
+          // Try to find by title match
+          const realSbId = generatedSbIds.get(linkedItem.title);
+          if (realSbId) {
+            log('info', 'Resolved placeholder sb_id in linked_items', {
+              event_id: eventId,
+              item_index: i,
+              original_sb_id: linkedItem.sb_id,
+              resolved_sb_id: realSbId,
+              title: linkedItem.title,
+            });
+            linkedItem.sb_id = realSbId;
+          }
+        }
+      }
+    }
     
     try {
       const result = await processSingleItem(
@@ -2158,6 +2184,17 @@ async function handleMultiItemMessage(
         systemPrompt,
         i
       );
+      
+      // Track generated sb_id for cross-reference resolution in subsequent items
+      if (result.generatedSbId && actionPlan.title) {
+        generatedSbIds.set(actionPlan.title, result.generatedSbId);
+        log('info', 'Tracked generated sb_id for cross-reference', {
+          event_id: eventId,
+          item_index: i,
+          title: actionPlan.title,
+          sb_id: result.generatedSbId,
+        });
+      }
       
       results.push({
         index: i,
